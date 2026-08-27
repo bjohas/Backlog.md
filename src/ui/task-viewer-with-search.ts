@@ -65,6 +65,13 @@ function getPriorityDisplay(priority?: string): string {
 	}
 }
 
+export const DEFAULT_TASK_LIST_PANE_WIDTH = 40;
+
+export function resolveTaskListPaneWidth(value: number | undefined): number {
+	if (typeof value !== "number" || !Number.isFinite(value)) return DEFAULT_TASK_LIST_PANE_WIDTH;
+	return Math.min(90, Math.max(10, Math.round(value)));
+}
+
 export function formatTaskViewerListItem(
 	task: Task,
 	availableWidth = Number.POSITIVE_INFINITY,
@@ -277,6 +284,7 @@ export async function viewTaskEnhanced(
 
 	let dateFormat: string | undefined;
 	let projectName: string | undefined;
+	let taskListPaneWidth = DEFAULT_TASK_LIST_PANE_WIDTH;
 
 	if (options.tasks) {
 		// Tasks already provided - use in-memory search (no ContentStore loading)
@@ -288,6 +296,7 @@ export async function viewTaskEnhanced(
 		configuredTaskTypes = getTaskTypeValues(config);
 		dateFormat = config?.dateFormat;
 		projectName = config?.projectName;
+		taskListPaneWidth = resolveTaskListPaneWidth(config?.taskListPaneWidth);
 		taskSearchIndex = createTaskSearchIndex(allTasks);
 	} else {
 		// Need to load tasks - show loading screen
@@ -301,6 +310,7 @@ export async function viewTaskEnhanced(
 			configuredTaskTypes = getTaskTypeValues(config);
 			dateFormat = config?.dateFormat;
 			projectName = config?.projectName;
+			taskListPaneWidth = resolveTaskListPaneWidth(config?.taskListPaneWidth);
 
 			loadingScreen?.update("Loading tasks from branches...");
 			contentStore = await core.getContentStore();
@@ -593,12 +603,12 @@ export async function viewTaskEnhanced(
 	// Get dynamic header height
 	const getHeaderHeight = () => filterHeader.getHeight();
 
-	// Task list pane (left 40%)
+	// Task list pane (left side, width configurable via taskListPaneWidth)
 	const taskListPane = box({
 		parent: container,
 		top: getHeaderHeight(),
 		left: 0,
-		width: "40%",
+		width: `${taskListPaneWidth}%`,
 		height: `100%-${getHeaderHeight() + 1}`,
 		border: { type: "line" },
 		style: { border: { fg: "gray" } },
@@ -609,7 +619,7 @@ export async function viewTaskEnhanced(
 	const detailPane = box({
 		parent: container,
 		top: getHeaderHeight(),
-		left: "40%",
+		left: `${taskListPaneWidth}%`,
 		right: 0,
 		height: `100%-${getHeaderHeight() + 1}`,
 		border: { type: "line" },
@@ -651,7 +661,7 @@ export async function viewTaskEnhanced(
 	}
 
 	function getTaskListSummaryWidth(): number {
-		return Math.max(1, Math.floor(getTerminalWidth() * 0.4) - 4);
+		return Math.max(1, Math.floor((getTerminalWidth() * taskListPaneWidth) / 100) - 4);
 	}
 
 	function syncPaneLayout() {
