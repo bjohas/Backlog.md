@@ -188,6 +188,7 @@ const TaskList: React.FC<TaskListProps> = ({
 	const [cleanupSuccessMessage, setCleanupSuccessMessage] = useState<string | null>(null);
 	const [sortColumn, setSortColumn] = useState<TaskSortColumn>(() => readStoredSort().column);
 	const [sortDirection, setSortDirection] = useState<SortDirection>(() => readStoredSort().direction);
+	const [searchText, setSearchText] = useState("");
 
 	useEffect(() => {
 		try {
@@ -711,7 +712,14 @@ const TaskList: React.FC<TaskListProps> = ({
 		const compareText = (a: string, b: string) => collator.compare(a, b);
 		const withDirection = (value: number) => (sortDirection === "asc" ? value : -value);
 
-		return [...displayTasks].sort((a, b) => {
+		const query = searchText.trim().toLowerCase();
+		const matchingTasks = query
+			? displayTasks.filter(
+					(task) => task.id.toLowerCase().includes(query) || task.title.toLowerCase().includes(query),
+				)
+			: displayTasks;
+
+		return [...matchingTasks].sort((a, b) => {
 			let result = 0;
 			switch (sortColumn) {
 				case "id": {
@@ -786,7 +794,7 @@ const TaskList: React.FC<TaskListProps> = ({
 			if (sortColumn === "ordinal") return compareTaskIdsAscending(a, b);
 			return compareTaskIdsDescending(a.id, b.id);
 		});
-	}, [availablePriorities, displayTasks, milestoneEntities, sortColumn, sortDirection]);
+	}, [availablePriorities, displayTasks, milestoneEntities, searchText, sortColumn, sortDirection]);
 
 	const currentCount = sortedDisplayTasks.length;
 
@@ -862,6 +870,13 @@ const TaskList: React.FC<TaskListProps> = ({
 
 				<div className="flex flex-wrap items-center gap-3 justify-between">
 						<div className="flex flex-wrap items-center gap-3 flex-1 min-w-0">
+							<input
+								type="search"
+								value={searchText}
+								onChange={(event) => setSearchText(event.target.value)}
+								placeholder="Search"
+								className="min-w-[140px] h-10 py-2 px-3 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-stone-500 dark:focus:ring-stone-400 transition-colors duration-200"
+							/>
 							<LabelFilterDropdown
 								availableLabels={statusOptions}
 								selectedLabels={statusFilter}
