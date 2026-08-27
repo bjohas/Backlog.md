@@ -575,10 +575,22 @@ function AppContent() {
   }, [tasks, editingTask, showModal]);
 
   useEffect(() => {
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const ws = new WebSocket(`${protocol}//${window.location.host}`);
 	let disposed = false;
-    ws.onmessage = (event) => {
+	let ws: WebSocket | null = null;
+	let reconnectTimer: number | undefined;
+	let hadConnection = false;
+
+	const connect = () => {
+		if (disposed) return;
+		const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+		ws = new WebSocket(`${protocol}//${window.location.host}`);
+		ws.onopen = () => {
+			if (disposed) return;
+			// Catch up on anything that changed while the socket was down.
+			if (hadConnection) void refreshData();
+			hadConnection = true;
+		};
+		ws.onmessage = (event) => {
 	  const loadingState = parseBrowserLoadingState(event.data);
 	  if (loadingState?.type === 'loading') {
 		if (pendingDataRequestRef.current === null) protocolOnlyLoadingRef.current = true;
@@ -602,14 +614,24 @@ function AppContent() {
         loadAllData();
       }
     };
-	ws.onclose = () => {
-		if (disposed || !protocolOnlyLoadingRef.current || pendingDataRequestRef.current !== null) return;
-		protocolOnlyLoadingRef.current = false;
-		void refreshData();
+		ws.onclose = () => {
+			if (disposed) return;
+			if (protocolOnlyLoadingRef.current && pendingDataRequestRef.current === null) {
+				protocolOnlyLoadingRef.current = false;
+				void refreshData();
+			}
+			// The push channel is the only way the page learns about external
+			// edits; keep retrying so it comes back after sleep or a server
+			// restart.
+			reconnectTimer = window.setTimeout(connect, 3000);
+		};
 	};
+
+	connect();
 	return () => {
 		disposed = true;
-		ws.close();
+		if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
+		ws?.close();
 	};
   }, [refreshData, loadAllData]);
 
