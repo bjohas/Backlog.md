@@ -166,24 +166,20 @@ const TaskList: React.FC<TaskListProps> = ({
 	const tableHeaderScrollRef = useRef<HTMLDivElement | null>(null);
 	const tableBodyScrollRef = useRef<HTMLDivElement | null>(null);
 	const isSyncingTableScrollRef = useRef(false);
-	const tableContainerRef = useRef<HTMLDivElement | null>(null);
-	const [isTableFullscreen, setIsTableFullscreen] = useState(false);
+	const [isMaximized, setIsMaximized] = useState(false);
 
 	useEffect(() => {
-		const handleFullscreenChange = () => {
-			setIsTableFullscreen(document.fullscreenElement === tableContainerRef.current);
+		if (!isMaximized) return;
+		const handleKeyDown = (event: KeyboardEvent) => {
+			// An open dialog owns Escape (and this listener can run before the
+			// dialog's); only exit maximize when no dialog is open.
+			if (event.key === "Escape" && !event.defaultPrevented && !document.querySelector('[role="dialog"]')) {
+				setIsMaximized(false);
+			}
 		};
-		document.addEventListener("fullscreenchange", handleFullscreenChange);
-		return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
-	}, []);
-
-	const toggleTableFullscreen = () => {
-		if (document.fullscreenElement) {
-			void document.exitFullscreen();
-			return;
-		}
-		void tableContainerRef.current?.requestFullscreen();
-	};
+		document.addEventListener("keydown", handleKeyDown);
+		return () => document.removeEventListener("keydown", handleKeyDown);
+	}, [isMaximized]);
 	const isFilteringTerminalStatus = statusFilter.some((status) => isTerminalStatus(status, statusOptions));
 	const milestoneAliasToCanonical = useMemo(() => {
 		const aliasMap = new Map<string, string>();
@@ -728,7 +724,11 @@ const TaskList: React.FC<TaskListProps> = ({
 	}, [currentCount]);
 
 	return (
-		<div className="page-shell transition-colors duration-200">
+		<div
+			className={`${
+				isMaximized ? "fixed inset-0 z-40 overflow-y-auto bg-white dark:bg-gray-900 px-4 py-6" : "page-shell"
+			} transition-colors duration-200`}
+		>
 			<div className="flex flex-col gap-4 mb-6">
 				<div className="flex items-center justify-between gap-3">
 						<h1 className="text-2xl font-bold text-gray-900 dark:text-white">All Tasks</h1>
@@ -826,13 +826,22 @@ const TaskList: React.FC<TaskListProps> = ({
 								</button>
 							)}
 
-						{currentCount > 0 && (
-							<button
-								type="button"
-								onClick={toggleTableFullscreen}
-								className="py-2 px-3 text-sm border border-gray-300 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors duration-200 flex items-center"
-								title="Full screen"
-							>
+						<button
+							type="button"
+							onClick={() => setIsMaximized((value) => !value)}
+							className="py-2 px-3 text-sm border border-gray-300 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors duration-200 flex items-center"
+							title={isMaximized ? "Exit full screen" : "Full screen"}
+						>
+							{isMaximized ? (
+								<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+									<path
+										strokeLinecap="round"
+										strokeLinejoin="round"
+										strokeWidth={2}
+										d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5l5.25 5.25"
+									/>
+								</svg>
+							) : (
 								<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
 									<path
 										strokeLinecap="round"
@@ -841,8 +850,8 @@ const TaskList: React.FC<TaskListProps> = ({
 										d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15"
 									/>
 								</svg>
-							</button>
-						)}
+							)}
+						</button>
 
 						<div className="text-sm text-gray-600 dark:text-gray-300 whitespace-nowrap text-right min-w-[170px]">
 							Showing {currentCount} of {totalTasks} tasks
@@ -872,29 +881,7 @@ const TaskList: React.FC<TaskListProps> = ({
 					</p>
 				</div>
 			) : (
-				<div
-					ref={tableContainerRef}
-					className={`rounded-lg border border-gray-200 dark:border-gray-700 ${
-						isTableFullscreen ? "overflow-y-auto bg-white dark:bg-gray-900" : "overflow-hidden"
-					}`}
-				>
-					{isTableFullscreen && (
-						<button
-							type="button"
-							onClick={toggleTableFullscreen}
-							title="Exit full screen"
-							className="fixed top-3 right-3 z-20 p-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white/90 dark:bg-gray-800/90 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors duration-200"
-						>
-							<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-								<path
-									strokeLinecap="round"
-									strokeLinejoin="round"
-									strokeWidth={2}
-									d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5l5.25 5.25"
-								/>
-							</svg>
-						</button>
-					)}
+				<div className="rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
 					<div className="sticky top-0 z-10 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-700/95 backdrop-blur supports-[backdrop-filter]:bg-gray-50/90 supports-[backdrop-filter]:dark:bg-gray-700/85">
 						<div ref={tableHeaderScrollRef} className="overflow-x-auto" style={{ overflowY: "hidden" }}>
 							<table className="w-full table-fixed border-collapse" style={{ minWidth: `${TASK_TABLE_MIN_WIDTH_REM}rem` }}>
