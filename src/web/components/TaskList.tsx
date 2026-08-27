@@ -189,6 +189,17 @@ const TaskList: React.FC<TaskListProps> = ({
 	const [sortColumn, setSortColumn] = useState<TaskSortColumn>(() => readStoredSort().column);
 	const [sortDirection, setSortDirection] = useState<SortDirection>(() => readStoredSort().direction);
 	const [searchText, setSearchText] = useState("");
+	const [refreshing, setRefreshing] = useState(false);
+
+	const handleManualRefresh = async () => {
+		if (!onRefreshData || refreshing) return;
+		setRefreshing(true);
+		try {
+			await onRefreshData();
+		} finally {
+			setRefreshing(false);
+		}
+	};
 
 	useEffect(() => {
 		try {
@@ -858,6 +869,30 @@ const TaskList: React.FC<TaskListProps> = ({
 									</svg>
 								)}
 							</button>
+							{onRefreshData && (
+								<button
+									type="button"
+									onClick={() => void handleManualRefresh()}
+									disabled={refreshing}
+									className="p-2 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors duration-200 flex items-center disabled:opacity-50"
+									title="Refresh"
+								>
+									<svg
+										className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`}
+										fill="none"
+										stroke="currentColor"
+										viewBox="0 0 24 24"
+										xmlns="http://www.w3.org/2000/svg"
+									>
+										<path
+											strokeLinecap="round"
+											strokeLinejoin="round"
+											strokeWidth={2}
+											d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+										/>
+									</svg>
+								</button>
+							)}
 							<h1 className="text-2xl font-bold text-gray-900 dark:text-white">All Tasks</h1>
 						</div>
 						<button
