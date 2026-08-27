@@ -45,6 +45,34 @@ interface TaskListProps {
 type TaskSortColumn = "id" | "title" | "status" | "priority" | "ordinal" | "milestone" | "created" | "updated";
 type SortDirection = "asc" | "desc";
 
+const TASK_SORT_COLUMNS: readonly TaskSortColumn[] = [
+	"id",
+	"title",
+	"status",
+	"priority",
+	"ordinal",
+	"milestone",
+	"created",
+	"updated",
+];
+const SORT_STORAGE_KEY = "backlog-tasklist-sort";
+
+function readStoredSort(): { column: TaskSortColumn; direction: SortDirection } {
+	const fallback = { column: "id" as TaskSortColumn, direction: "desc" as SortDirection };
+	try {
+		const raw = window.localStorage.getItem(SORT_STORAGE_KEY);
+		if (!raw) return fallback;
+		const parsed: unknown = JSON.parse(raw);
+		if (typeof parsed !== "object" || parsed === null) return fallback;
+		const { column, direction } = parsed as { column?: unknown; direction?: unknown };
+		if (!TASK_SORT_COLUMNS.includes(column as TaskSortColumn)) return fallback;
+		if (direction !== "asc" && direction !== "desc") return fallback;
+		return { column: column as TaskSortColumn, direction };
+	} catch {
+		return fallback;
+	}
+}
+
 // Column widths in rem, in render order: ID, Title, Status, Priority, Ordinal, Labels,
 // Assignee, Milestone, Created, Updated. Each metadata column is sized to the wider of its
 // header label and its cell content; Title is the one flexible column (null) and absorbs
@@ -158,8 +186,16 @@ const TaskList: React.FC<TaskListProps> = ({
 	const [error, setError] = useState<string | null>(null);
 	const [showCleanupModal, setShowCleanupModal] = useState(false);
 	const [cleanupSuccessMessage, setCleanupSuccessMessage] = useState<string | null>(null);
-	const [sortColumn, setSortColumn] = useState<TaskSortColumn>("id");
-	const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
+	const [sortColumn, setSortColumn] = useState<TaskSortColumn>(() => readStoredSort().column);
+	const [sortDirection, setSortDirection] = useState<SortDirection>(() => readStoredSort().direction);
+
+	useEffect(() => {
+		try {
+			window.localStorage.setItem(SORT_STORAGE_KEY, JSON.stringify({ column: sortColumn, direction: sortDirection }));
+		} catch {
+			// storage unavailable; sorting still works for this visit
+		}
+	}, [sortColumn, sortDirection]);
 	const priorityOptions = useMemo(
 		() => [{ label: "All priorities", value: "" }, ...getPriorityOptions(availablePriorities)],
 		[availablePriorities],
