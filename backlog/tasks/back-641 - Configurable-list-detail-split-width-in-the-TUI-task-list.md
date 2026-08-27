@@ -1,11 +1,11 @@
 ---
 id: BACK-641
 title: Configurable list/detail split width in the TUI task list
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-27 15:50'
-updated_date: '2026-08-27 15:57'
+updated_date: '2026-08-27 16:14'
 labels: []
 dependencies: []
 ordinal: 276000
@@ -21,17 +21,17 @@ Upstream issue: https://github.com/MrLesk/Backlog.md/issues/946
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A config key taskListPaneWidth (percentage) controls the width of the task-list pane in the TUI list view, defaulting to current behavior (40) when unset
-- [ ] #2 The key is settable, gettable, and listed via `backlog config set/get/list` with validation rejecting values outside a sane range
-- [ ] #3 Summary truncation in the list pane respects the configured width
-- [ ] #4 Tests cover config validation and the width being applied
+- [x] #1 A config key taskListPaneWidth (percentage) controls the width of the task-list pane in the TUI list view, defaulting to current behavior (40) when unset
+- [x] #2 The key is settable, gettable, and listed via `backlog config set/get/list` with validation rejecting values outside a sane range
+- [x] #3 Summary truncation in the list pane respects the configured width
+- [x] #4 Tests cover config validation and the width being applied
 <!-- AC:END -->
 
 ## Definition of Done
 <!-- DOD:BEGIN -->
-- [ ] #1 bunx tsc --noEmit passes when TypeScript touched
-- [ ] #2 bun run check . passes when formatting/linting touched
-- [ ] #3 bun test (or scoped test) passes
+- [x] #1 bunx tsc --noEmit passes when TypeScript touched
+- [x] #2 bun run check . passes when formatting/linting touched
+- [x] #3 bun test (or scoped test) passes
 <!-- DOD:END -->
 
 ## Implementation Plan
@@ -49,4 +49,12 @@ Upstream issue: https://github.com/MrLesk/Backlog.md/issues/946
 
 <!-- SECTION:NOTES:BEGIN -->
 Implemented taskListPaneWidth (10-90%, default 40): BacklogConfig type, task_list_pane_width parse/serialize in operations.ts, config-watcher integer validation, CLI config get/set/list with range validation, and TUI list view layout (pane widths + summary truncation) via resolveTaskListPaneWidth. Tests: CLI round-trip + rejection in config-commands.test.ts, resolver unit tests in task-list-pane-width.test.ts. tsc, Biome, and related test suites pass. Commit 0e26c17 on tasks/back-641-tui-list-pane-width.
+
+Verification: drove the real TUI in a pty (script) at 100 cols - default renders the split at col 40; after 'backlog config set taskListPaneWidth 60' the split renders at col 60 (border pattern x[58C]xx[38C]x on all rows). CLI set/get/list verified live and by tests; invalid values (5/95/abc) rejected. bunx tsc --noEmit passes; Biome clean on all touched files (repo-wide 'bun run check .' has a pre-existing format drift in src/ui/components/task-composer.ts, present on main). Full suite: only pre-existing/environmental failures (tui-task-composer + window-title fail identically on main; 2 status-filtering flakes pass scoped).
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Added taskListPaneWidth config key (10-90%, default 40) controlling the task-list/detail split in the TUI list view: BacklogConfig type, task_list_pane_width parse/serialize, config-watcher validation, CLI config get/set/list with range validation, and viewer layout incl. summary truncation. Verified by unit/CLI tests and by rendering the real TUI in a pty at 100 cols, observing the split move from col 40 to col 60 after setting the key to 60.
+<!-- SECTION:FINAL_SUMMARY:END -->
