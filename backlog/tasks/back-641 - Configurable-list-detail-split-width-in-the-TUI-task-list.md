@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-08-27 15:50'
-updated_date: '2026-08-27 15:51'
+updated_date: '2026-08-27 15:57'
 labels: []
 dependencies: []
 ordinal: 276000
@@ -44,3 +44,9 @@ Upstream issue: https://github.com/MrLesk/Backlog.md/issues/946
 5. Apply in TUI list view (src/ui/task-viewer-with-search.ts): read config.taskListPaneWidth (clamped, default 40), use for taskListPane.width, detailPane.left, and getTaskListSummaryWidth.
 6. Tests: config set/get validation + width application in list rendering.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented taskListPaneWidth (10-90%, default 40): BacklogConfig type, task_list_pane_width parse/serialize in operations.ts, config-watcher integer validation, CLI config get/set/list with range validation, and TUI list view layout (pane widths + summary truncation) via resolveTaskListPaneWidth. Tests: CLI round-trip + rejection in config-commands.test.ts, resolver unit tests in task-list-pane-width.test.ts. tsc, Biome, and related test suites pass. Commit 0e26c17 on tasks/back-641-tui-list-pane-width.
+<!-- SECTION:NOTES:END -->
