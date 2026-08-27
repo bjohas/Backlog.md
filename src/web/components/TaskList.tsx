@@ -42,14 +42,15 @@ interface TaskListProps {
 	isLoading?: boolean;
 }
 
-type TaskSortColumn = "id" | "title" | "status" | "priority" | "ordinal" | "milestone" | "created";
+type TaskSortColumn = "id" | "title" | "status" | "priority" | "ordinal" | "milestone" | "created" | "updated";
 type SortDirection = "asc" | "desc";
 
 // Column widths in rem, in render order: ID, Title, Status, Priority, Ordinal, Labels,
-// Assignee, Milestone, Created. Each metadata column is sized to the wider of its header
-// label and its cell content; Title is the one flexible column (null) and absorbs whatever
-// the content area has left, so the table fits a laptop viewport instead of overflowing it.
-const TASK_COLUMN_WIDTHS_REM: readonly (number | null)[] = [6, null, 6.5, 6.5, 6, 8, 6.5, 8, 6];
+// Assignee, Milestone, Created, Updated. Each metadata column is sized to the wider of its
+// header label and its cell content; Title is the one flexible column (null) and absorbs
+// whatever the content area has left, so the table fits a laptop viewport instead of
+// overflowing it.
+const TASK_COLUMN_WIDTHS_REM: readonly (number | null)[] = [6, null, 6.5, 6.5, 6, 8, 6.5, 8, 6, 6];
 
 // Below this the table scrolls horizontally rather than crushing the columns.
 const TASK_TITLE_MIN_WIDTH_REM = 12;
@@ -623,7 +624,7 @@ const TaskList: React.FC<TaskListProps> = ({
 		}
 
 		setSortColumn(column);
-		setSortDirection(column === "id" || column === "created" ? "desc" : "asc");
+		setSortDirection(column === "id" || column === "created" || column === "updated" ? "desc" : "asc");
 	};
 
 	const getSortAriaValue = (column: TaskSortColumn): "none" | "ascending" | "descending" => {
@@ -725,6 +726,21 @@ const TaskList: React.FC<TaskListProps> = ({
 						result = -1;
 					} else {
 						result = withDirection(createdA - createdB);
+					}
+					break;
+				}
+				case "updated": {
+					// A never-edited task's last change is its creation.
+					const updatedA = parseStoredUtcDate(a.updatedDate ?? a.createdDate)?.getTime();
+					const updatedB = parseStoredUtcDate(b.updatedDate ?? b.createdDate)?.getTime();
+					if (updatedA === undefined && updatedB === undefined) {
+						result = 0;
+					} else if (updatedA === undefined) {
+						result = 1;
+					} else if (updatedB === undefined) {
+						result = -1;
+					} else {
+						result = withDirection(updatedA - updatedB);
 					}
 					break;
 				}
@@ -939,6 +955,7 @@ const TaskList: React.FC<TaskListProps> = ({
 										<th className="px-3 py-2">Assignee</th>
 										{renderSortableHeader("Milestone", "milestone")}
 										{renderSortableHeader("Created", "created")}
+										{renderSortableHeader("Updated", "updated")}
 									</tr>
 								</thead>
 							</table>
@@ -956,6 +973,10 @@ const TaskList: React.FC<TaskListProps> = ({
 									const assigneeOverflow = Math.max(task.assignee.length - visibleAssignees.length, 0);
 									const milestoneLabel = task.milestone ? getMilestoneLabel(task.milestone, milestoneEntities) : "—";
 									const createdLabel = formatStoredUtcDateForCompactDisplay(task.createdDate ?? "", dateFormat);
+									const updatedLabel = formatStoredUtcDateForCompactDisplay(
+										task.updatedDate ?? task.createdDate ?? "",
+										dateFormat,
+									);
 
 									return (
 										<tr
@@ -1068,6 +1089,9 @@ const TaskList: React.FC<TaskListProps> = ({
 											</td>
 											<td className="px-3 py-2.5 text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
 												{createdLabel}
+											</td>
+											<td className="px-3 py-2.5 text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
+												{updatedLabel}
 											</td>
 										</tr>
 									);
