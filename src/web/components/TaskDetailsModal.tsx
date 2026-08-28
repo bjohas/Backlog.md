@@ -6,6 +6,7 @@ import { useTheme } from "../contexts/ThemeContext";
 import MDEditor from "@uiw/react-md-editor";
 import AcceptanceCriteriaEditor from "./AcceptanceCriteriaEditor";
 import MermaidMarkdown from './MermaidMarkdown';
+import { toggleCheckboxSpanAt } from '../utils/checkbox-spans';
 import ChipInput from "./ChipInput";
 import DependencyInput from "./DependencyInput";
 import { formatStoredUtcDateForDisplay } from "../utils/date-display";
@@ -934,6 +935,29 @@ export const TaskDetailsModal: React.FC<Props> = ({
     }
   };
 
+  // Quarto `[]{.checkbox}` decision boxes inside free-form task text. The markdown
+  // source is the state, so a toggle rewrites the span and saves the section.
+  const handleToggleCheckboxSpan = async (
+    field: "description" | "implementationNotes",
+    value: string,
+    setValue: (next: string) => void,
+    offset: number,
+  ) => {
+    if (demoting || saving) return;
+    if (!task) return; // Can't toggle in create mode
+    if (isFromOtherBranch) return; // Can't toggle for cross-branch tasks
+    const next = toggleCheckboxSpanAt(value, offset);
+    if (next === null) return; // stale offset: leave the document alone
+    setValue(next);
+    try {
+      await apiClient.updateTask(task.id, { [field]: next } as TaskUpdatePayload);
+      if (onSaved) await onSaved();
+    } catch (err) {
+      setValue(value);
+      console.error("Failed to update checkbox", err);
+    }
+  };
+
   const handleToggleDefinitionOfDone = async (index: number, checked: boolean) => {
     if (demoting) return;
     if (!task) return; // Can't toggle in create mode
@@ -1341,7 +1365,10 @@ export const TaskDetailsModal: React.FC<Props> = ({
             {mode === "preview" ? (
               description ? (
                 <div className="prose prose-sm !max-w-none wmde-markdown" data-color-mode={theme}>
-                  <MermaidMarkdown source={description} />
+                  <MermaidMarkdown
+                    source={description}
+                    onToggleCheckbox={(offset) => void handleToggleCheckboxSpan("description", description, setDescription, offset)}
+                  />
                 </div>
               ) : (
                 <div className="text-sm text-gray-500 dark:text-gray-400">No description</div>
@@ -1679,7 +1706,10 @@ export const TaskDetailsModal: React.FC<Props> = ({
             {mode === "preview" ? (
               notes ? (
                 <div className="prose prose-sm !max-w-none wmde-markdown" data-color-mode={theme}>
-                  <MermaidMarkdown source={notes} />
+                  <MermaidMarkdown
+                    source={notes}
+                    onToggleCheckbox={(offset) => void handleToggleCheckboxSpan("implementationNotes", notes, setNotes, offset)}
+                  />
                 </div>
               ) : (
                 <div className="text-sm text-gray-500 dark:text-gray-400">No notes</div>
