@@ -247,14 +247,46 @@ const TaskList: React.FC<TaskListProps> = ({
 
 	useEffect(() => {
 		if (!isMaximized) return;
-		// Leaving browser fullscreen (Esc, system gesture) exits maximize too.
-		const handleFullscreenChange = () => {
+		// Mobile browsers drop fullscreen whenever the page loses focus - an app
+		// switch, a screen lock, a connectivity interruption. The overlay is our
+		// own state, so it stays put; only the browser's fullscreen is lost, and
+		// it is restored on the next interaction after the page comes back.
+		// Re-entering needs a user gesture, so a one-shot pointerdown does it.
+		let lostWhileHidden = false;
+
+		const restoreFullscreen = () => {
+			lostWhileHidden = false;
 			if (!document.fullscreenElement) {
-				setIsMaximized(false);
+				document.documentElement.requestFullscreen?.()?.catch(() => {});
 			}
 		};
+
+		const handleFullscreenChange = () => {
+			if (!document.fullscreenElement && document.hidden) {
+				lostWhileHidden = true;
+			}
+		};
+
+		const handleVisibilityChange = () => {
+			if (document.hidden) {
+				// Some browsers report the exit only once the page is back.
+				if (document.fullscreenElement) lostWhileHidden = true;
+				return;
+			}
+			if (!lostWhileHidden || document.fullscreenElement) {
+				lostWhileHidden = false;
+				return;
+			}
+			document.addEventListener("pointerdown", restoreFullscreen, { once: true });
+		};
+
 		document.addEventListener("fullscreenchange", handleFullscreenChange);
-		return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
+		document.addEventListener("visibilitychange", handleVisibilityChange);
+		return () => {
+			document.removeEventListener("fullscreenchange", handleFullscreenChange);
+			document.removeEventListener("visibilitychange", handleVisibilityChange);
+			document.removeEventListener("pointerdown", restoreFullscreen);
+		};
 	}, [isMaximized]);
 
 	useEffect(() => {
