@@ -270,6 +270,7 @@ export const TaskDetailsModal: React.FC<Props> = ({
   const [commentsChanged, setCommentsChanged] = useState(false);
   const preserveEditModeAfterCommentRefresh = useRef(false);
   const [composingComment, setComposingComment] = useState(false);
+  const commentBodyRef = useRef<HTMLTextAreaElement | null>(null);
   const [finalSummary, setFinalSummary] = useState(task?.finalSummary || "");
   const [criteria, setCriteria] = useState<AcceptanceCriterion[]>(task?.acceptanceCriteriaItems || []);
   const defaultDefinitionOfDone = useMemo(
@@ -690,6 +691,14 @@ export const TaskDetailsModal: React.FC<Props> = ({
     formBaselineRef.current = nextFormState;
     setError(null);
   }, [task, isOpen, isCreateMode, isDraftMode, availableStatuses, defaultDefinitionOfDone, createModeAssignee]);
+
+  useEffect(() => {
+    if (!composingComment) return;
+    const field = commentBodyRef.current;
+    if (!field) return;
+    field.scrollIntoView({ behavior: "smooth", block: "center" });
+    field.focus({ preventScroll: true });
+  }, [composingComment]);
 
   const refreshAfterCommentChange = useCallback(() => {
     if (!commentsChanged) return;
@@ -1289,6 +1298,20 @@ export const TaskDetailsModal: React.FC<Props> = ({
               </button>
             </div>
           ) : null}
+          {mode === "preview" && !isCreateMode && !isFromOtherBranch && (
+            <button
+              onClick={() => setComposingComment(true)}
+              disabled={demoting}
+              className="inline-flex items-center px-3 py-2 sm:px-4 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-offset-2 dark:focus:ring-offset-gray-900 transition-colors duration-200"
+              title="Comment"
+            >
+              <svg className="w-4 h-4 sm:mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                      d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 4v-4z" />
+              </svg>
+              <span className="hidden sm:inline">Comment</span>
+            </button>
+          )}
         </div>
       }
     >
@@ -1774,6 +1797,7 @@ export const TaskDetailsModal: React.FC<Props> = ({
                     className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-transparent transition-colors duration-200"
                   />
                   <textarea
+                    ref={commentBodyRef}
                     value={commentBody}
                     onChange={(e) => setCommentBody(e.target.value)}
                     rows={4}
