@@ -269,6 +269,7 @@ export const TaskDetailsModal: React.FC<Props> = ({
   const [commentSaving, setCommentSaving] = useState(false);
   const [commentsChanged, setCommentsChanged] = useState(false);
   const preserveEditModeAfterCommentRefresh = useRef(false);
+  const [composingComment, setComposingComment] = useState(false);
   const [finalSummary, setFinalSummary] = useState(task?.finalSummary || "");
   const [criteria, setCriteria] = useState<AcceptanceCriterion[]>(task?.acceptanceCriteriaItems || []);
   const defaultDefinitionOfDone = useMemo(
@@ -666,6 +667,7 @@ export const TaskDetailsModal: React.FC<Props> = ({
     setDisplayComments(nextFormState.displayComments);
     setCommentBody("");
     setCommentAuthor("");
+    setComposingComment(false);
     setCommentSaving(false);
     setCommentsChanged(false);
     setFinalSummary(nextFormState.finalSummary);
@@ -1063,7 +1065,8 @@ export const TaskDetailsModal: React.FC<Props> = ({
     }
     setCommentSaving(true);
     setError(null);
-    preserveEditModeAfterCommentRefresh.current = true;
+    // Only an edit-mode comment should hold the form open through the refresh.
+    preserveEditModeAfterCommentRefresh.current = modeRef.current === "edit";
     try {
       const updatedTask = await apiClient.updateTask(task.id, {
         commentsAppend: [body],
@@ -1073,6 +1076,7 @@ export const TaskDetailsModal: React.FC<Props> = ({
       setCommentsChanged(true);
       setCommentBody("");
       setCommentAuthor("");
+      setComposingComment(false);
     } catch (err) {
       preserveEditModeAfterCommentRefresh.current = false;
       setError(err instanceof Error ? err.message : String(err));
@@ -1749,7 +1753,18 @@ export const TaskDetailsModal: React.FC<Props> = ({
               ) : (
                 <div className="text-sm text-gray-500 dark:text-gray-400">No comments</div>
               )}
-              {mode === "edit" && !isFromOtherBranch && (
+              {mode === "preview" && !isCreateMode && !isFromOtherBranch && !composingComment && (
+                <div className="mt-4 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setComposingComment(true)}
+                    className="px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors duration-200"
+                  >
+                    Add comment
+                  </button>
+                </div>
+              )}
+              {((mode === "edit" && !isFromOtherBranch) || (mode === "preview" && composingComment)) && (
                 <div className="mt-4 space-y-2">
                   <input
                     type="text"
@@ -1765,7 +1780,20 @@ export const TaskDetailsModal: React.FC<Props> = ({
                     placeholder="Add a comment..."
                     className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
                   />
-                  <div className="flex justify-end">
+                  <div className="flex justify-end gap-2">
+                    {mode === "preview" && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setComposingComment(false);
+                          setCommentBody("");
+                        }}
+                        disabled={commentSaving}
+                        className="px-4 py-2 text-sm font-medium border border-gray-300 dark:border-gray-600 rounded-md text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
+                      >
+                        Cancel
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => void handleAddComment()}
