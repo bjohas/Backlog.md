@@ -842,6 +842,7 @@ function AppContent() {
         definitionOfDoneDefaults={config?.definitionOfDone ?? []}
         defaultAssignee={config?.defaultAssignee}
         dateFormat={config?.dateFormat}
+        documentBaseUrl={config?.documentBaseUrl}
       />
 
       {/* Task Creation Confirmation Toast */}

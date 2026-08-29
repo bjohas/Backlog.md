@@ -44,6 +44,7 @@ const RECOGNIZED_CONFIG_KEYS = new Set([
 	"date_format",
 	...INTEGER_CONFIG_KEYS,
 	"default_editor",
+	"document_base_url",
 	...BOOLEAN_CONFIG_KEYS,
 	"onStatusChange",
 	"on_status_change",

@@ -7,6 +7,7 @@ import MDEditor from "@uiw/react-md-editor";
 import AcceptanceCriteriaEditor from "./AcceptanceCriteriaEditor";
 import MermaidMarkdown from './MermaidMarkdown';
 import { toggleCheckboxSpanAt } from '../utils/checkbox-spans';
+import { resolveDocumentUrl } from '../utils/document-url';
 import ChipInput from "./ChipInput";
 import DependencyInput from "./DependencyInput";
 import { formatStoredUtcDateForDisplay } from "../utils/date-display";
@@ -37,6 +38,7 @@ interface Props {
   definitionOfDoneDefaults?: string[];
   defaultAssignee?: string[];
   dateFormat?: string;
+  documentBaseUrl?: string;
 }
 
 type Mode = "preview" | "edit" | "create";
@@ -201,6 +203,7 @@ export const TaskDetailsModal: React.FC<Props> = ({
   definitionOfDoneDefaults,
   defaultAssignee,
   dateFormat,
+  documentBaseUrl,
 }) => {
   const { theme } = useTheme();
   const isCreateMode = !task;
@@ -1612,20 +1615,23 @@ export const TaskDetailsModal: React.FC<Props> = ({
                   {documentation.map((doc, idx) => (
                     <li key={idx} className="flex items-center gap-3">
                       <span className="flex-1 min-w-0">
-                        {doc.startsWith("http://") || doc.startsWith("https://") ? (
-                          <a
-                            href={doc}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-sm text-blue-600 dark:text-blue-400 hover:underline break-all"
-                          >
-                            {doc}
-                          </a>
-                        ) : (
-                          <code className="text-sm font-mono text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 px-2 py-0.5 rounded break-all">
-                            {doc}
-                          </code>
-                        )}
+                        {(() => {
+                          const href = resolveDocumentUrl(doc, documentBaseUrl);
+                          return href ? (
+                            <a
+                              href={href}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-sm text-blue-600 dark:text-blue-400 hover:underline break-all"
+                            >
+                              {doc}
+                            </a>
+                          ) : (
+                            <code className="text-sm font-mono text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 px-2 py-0.5 rounded break-all">
+                              {doc}
+                            </code>
+                          );
+                        })()}
                       </span>
                     </li>
                   ))}
