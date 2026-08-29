@@ -10,6 +10,7 @@ import Settings from './components/Settings';
 import Statistics from './components/Statistics';
 import MilestonesPage from './components/MilestonesPage';
 import TaskDetailsModal from './components/TaskDetailsModal';
+import { DocumentBaseUrlProvider } from './contexts/DocumentBaseUrlContext';
 import InitializationScreen from './components/InitializationScreen';
 import { SuccessToast } from './components/SuccessToast';
 import { ThemeProvider } from './contexts/ThemeContext';
@@ -729,6 +730,7 @@ function AppContent() {
 
   return (
     <ThemeProvider>
+      <DocumentBaseUrlProvider baseUrl={config?.documentBaseUrl}>
       <TaskIdIndexProvider tasks={tasks}>
       <Routes>
             <Route
@@ -858,6 +860,7 @@ function AppContent() {
         />
       )}
       </TaskIdIndexProvider>
+      </DocumentBaseUrlProvider>
     </ThemeProvider>
   );
 }
