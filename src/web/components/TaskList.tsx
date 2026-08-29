@@ -74,6 +74,16 @@ function readStoredSort(): { column: TaskSortColumn; direction: SortDirection } 
 	}
 }
 
+/** URL sort/dir params win over localStorage, which wins over the id/desc default. */
+function readInitialSort(searchParams: URLSearchParams): { column: TaskSortColumn; direction: SortDirection } {
+	const paramColumn = searchParams.get("sort");
+	const paramDirection = searchParams.get("dir");
+	if (TASK_SORT_COLUMNS.includes(paramColumn as TaskSortColumn) && (paramDirection === "asc" || paramDirection === "desc")) {
+		return { column: paramColumn as TaskSortColumn, direction: paramDirection };
+	}
+	return readStoredSort();
+}
+
 // Column widths in rem, in render order: ID, Title, Status, Priority, Ordinal, Labels,
 // Assignee, Milestone, Created, Updated. Each metadata column is sized to the wider of its
 // header label and its cell content; Title is the one flexible column (null) and absorbs
@@ -187,8 +197,8 @@ const TaskList: React.FC<TaskListProps> = ({
 	const [error, setError] = useState<string | null>(null);
 	const [showCleanupModal, setShowCleanupModal] = useState(false);
 	const [cleanupSuccessMessage, setCleanupSuccessMessage] = useState<string | null>(null);
-	const [sortColumn, setSortColumn] = useState<TaskSortColumn>(() => readStoredSort().column);
-	const [sortDirection, setSortDirection] = useState<SortDirection>(() => readStoredSort().direction);
+	const [sortColumn, setSortColumn] = useState<TaskSortColumn>(() => readInitialSort(searchParams).column);
+	const [sortDirection, setSortDirection] = useState<SortDirection>(() => readInitialSort(searchParams).direction);
 	const [searchText, setSearchText] = useState("");
 	const [refreshing, setRefreshing] = useState(false);
 
@@ -592,6 +602,8 @@ const TaskList: React.FC<TaskListProps> = ({
 		nextPriority: string,
 		nextLabels: string[],
 		nextMilestone: string,
+		nextSortColumn: TaskSortColumn,
+		nextSortDirection: SortDirection,
 	) => {
 		const params = new URLSearchParams();
 		for (const status of nextStatuses) {
@@ -615,35 +627,41 @@ const TaskList: React.FC<TaskListProps> = ({
 		if (nextMilestone) {
 			params.set("milestone", nextMilestone);
 		}
+		// Both together, or neither: the base id/desc default keeps the URL
+		// clean, and a shared link is never half a sort spec.
+		if (nextSortColumn !== "id" || nextSortDirection !== "desc") {
+			params.set("sort", nextSortColumn);
+			params.set("dir", nextSortDirection);
+		}
 		setSearchParams(params, { replace: true });
 	};
 
 	const handleStatusChange = (next: string[]) => {
 		const normalized = normalizeStatusFilters(next, statusOptions);
 		setStatusFilter(normalized);
-		syncUrl(normalized, excludedStatusFilter, priorityFilter, labelFilter, milestoneFilter);
+		syncUrl(normalized, excludedStatusFilter, priorityFilter, labelFilter, milestoneFilter, sortColumn, sortDirection);
 	};
 
 	const handleExcludeStatusChange = (next: string[]) => {
 		const normalized = next.map((status) => status.trim()).filter((status) => status.length > 0);
 		setExcludedStatusFilter(normalized);
-		syncUrl(statusFilter, normalized, priorityFilter, labelFilter, milestoneFilter);
+		syncUrl(statusFilter, normalized, priorityFilter, labelFilter, milestoneFilter, sortColumn, sortDirection);
 	};
 
 	const handlePriorityChange = (value: string) => {
 		setPriorityFilter(value);
-		syncUrl(statusFilter, excludedStatusFilter, value, labelFilter, milestoneFilter);
+		syncUrl(statusFilter, excludedStatusFilter, value, labelFilter, milestoneFilter, sortColumn, sortDirection);
 	};
 
 	const handleLabelChange = (next: string[]) => {
 		const normalized = next.map((label) => label.trim()).filter((label) => label.length > 0);
 		setLabelFilter(normalized);
-		syncUrl(statusFilter, excludedStatusFilter, priorityFilter, normalized, milestoneFilter);
+		syncUrl(statusFilter, excludedStatusFilter, priorityFilter, normalized, milestoneFilter, sortColumn, sortDirection);
 	};
 
 	const handleMilestoneChange = (value: string) => {
 		setMilestoneFilter(value);
-		syncUrl(statusFilter, excludedStatusFilter, priorityFilter, labelFilter, value);
+		syncUrl(statusFilter, excludedStatusFilter, priorityFilter, labelFilter, value, sortColumn, sortDirection);
 	};
 
 	const handleClearFilters = () => {
@@ -652,7 +670,7 @@ const TaskList: React.FC<TaskListProps> = ({
 		setPriorityFilter("");
 		setLabelFilter([]);
 		setMilestoneFilter("");
-		syncUrl([], [], "", [], "");
+		syncUrl([], [], "", [], "", sortColumn, sortDirection);
 		setDisplayTasks(sortedBaseTasks);
 		setError(null);
 	};
@@ -699,13 +717,17 @@ const TaskList: React.FC<TaskListProps> = ({
 	};
 
 	const handleSortChange = (column: TaskSortColumn) => {
-		if (sortColumn === column) {
-			setSortDirection((previous) => (previous === "asc" ? "desc" : "asc"));
-			return;
-		}
-
+		const nextDirection: SortDirection =
+			sortColumn === column
+				? sortDirection === "asc"
+					? "desc"
+					: "asc"
+				: column === "id" || column === "created" || column === "updated"
+					? "desc"
+					: "asc";
 		setSortColumn(column);
-		setSortDirection(column === "id" || column === "created" || column === "updated" ? "desc" : "asc");
+		setSortDirection(nextDirection);
+		syncUrl(statusFilter, excludedStatusFilter, priorityFilter, labelFilter, milestoneFilter, column, nextDirection);
 	};
 
 	const getSortAriaValue = (column: TaskSortColumn): "none" | "ascending" | "descending" => {
