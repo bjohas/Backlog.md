@@ -535,6 +535,27 @@ export class GitOperations {
 		return stdout.trim();
 	}
 
+	/**
+	 * The locally configured `git config user.name`, or undefined when there is
+	 * no repository, no git identity configured, or the read otherwise fails.
+	 * Used as a fallback default assignee/comment author, never persisted.
+	 */
+	async getConfiguredUserName(): Promise<string | undefined> {
+		if (!(await this.isRepository())) {
+			return undefined;
+		}
+		try {
+			const { stdout } = await this.execGit(["config", "user.name"], {
+				readOnly: true,
+				acceptedExitCodes: [1],
+			});
+			const name = stdout.trim();
+			return name.length > 0 ? name : undefined;
+		} catch {
+			return undefined;
+		}
+	}
+
 	async getRepositoryRoot(cwd = this.projectRoot): Promise<string | null> {
 		return await this.resolveRepoRoot(cwd);
 	}

@@ -1392,7 +1392,10 @@ export class BacklogServer {
 			if (!config) {
 				return Response.json({ error: "Configuration not found" }, { status: 404 });
 			}
-			return Response.json(config);
+			// Derived, not persisted: a fallback default assignee/comment author
+			// for projects that haven't set defaultAssignee explicitly.
+			const gitUserName = await this.core.git.getConfiguredUserName().catch(() => undefined);
+			return Response.json({ ...config, gitUserName });
 		} catch (error) {
 			console.error("Error loading config:", error);
 			return Response.json({ error: "Failed to load configuration" }, { status: 500 });

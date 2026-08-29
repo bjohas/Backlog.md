@@ -264,6 +264,33 @@ const Settings: React.FC = () => {
 							</div>
 
 							<div>
+								<label htmlFor="defaultAssignee" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+									Default Assignee
+								</label>
+								<input
+									id="defaultAssignee"
+									type="text"
+									placeholder={config.gitUserName || 'e.g. @alex, @sam'}
+									value={(config.defaultAssignee ?? []).join(', ')}
+									onChange={(e) =>
+										handleInputChange(
+											'defaultAssignee',
+											e.target.value
+												.split(',')
+												.map((name) => name.trim())
+												.filter((name) => name.length > 0),
+										)
+									}
+									className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-900 dark:text-gray-100 bg-white dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-stone-500 dark:focus:ring-stone-400 transition-colors duration-200"
+								/>
+								<p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+									{config.gitUserName
+										? `Comma-separated. Leave blank to default new tasks and comments to your git identity (${config.gitUserName}).`
+										: 'Comma-separated assignees applied to new tasks and comments when none is given.'}
+								</p>
+							</div>
+
+							<div>
 								<label htmlFor="defaultEditor" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
 									Default Editor
 								</label>

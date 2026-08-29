@@ -288,6 +288,10 @@ export const TaskDetailsModal: React.FC<Props> = ({
     () => (isCreateMode ? (defaultAssignee ?? []) : []),
     [isCreateMode, defaultAssignee],
   );
+  // Same source as createModeAssignee (config defaultAssignee, else the
+  // server's git user.name) - a comment author the reader doesn't have to
+  // retype every time, editable per comment like any other field.
+  const defaultCommentAuthor = defaultAssignee?.[0] ?? "";
   const initialDefinitionOfDone = task?.definitionOfDoneItems ?? (isCreateMode ? defaultDefinitionOfDone : []);
   const [definitionOfDone, setDefinitionOfDone] = useState<AcceptanceCriterion[]>(initialDefinitionOfDone);
   const priorityOptions = useMemo(() => getPriorityOptions(availablePriorities), [availablePriorities]);
@@ -672,7 +676,7 @@ export const TaskDetailsModal: React.FC<Props> = ({
     setNotes(nextFormState.notes);
     setDisplayComments(nextFormState.displayComments);
     setCommentBody("");
-    setCommentAuthor("");
+    setCommentAuthor(defaultCommentAuthor);
     setComposingComment(false);
     setStaleCheckboxNotice(null);
     setCommentSaving(false);
@@ -762,7 +766,7 @@ export const TaskDetailsModal: React.FC<Props> = ({
       setPlan(task?.implementationPlan || "");
       setNotes(task?.implementationNotes || "");
       setCommentBody("");
-      setCommentAuthor("");
+      setCommentAuthor(defaultCommentAuthor);
       setFinalSummary(task?.finalSummary || "");
       setDueDate(task?.dueDate?.replace(" ", "T") || "");
       setCriteria(task?.acceptanceCriteriaItems || []);
@@ -1102,7 +1106,6 @@ export const TaskDetailsModal: React.FC<Props> = ({
       setDisplayComments(updatedTask.comments ?? []);
       setCommentsChanged(true);
       setCommentBody("");
-      setCommentAuthor("");
       setComposingComment(false);
     } catch (err) {
       preserveEditModeAfterCommentRefresh.current = false;

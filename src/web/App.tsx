@@ -843,7 +843,7 @@ function AppContent() {
         archivedMilestoneEntities={archivedMilestones}
         isDraftMode={isDraftMode}
         definitionOfDoneDefaults={config?.definitionOfDone ?? []}
-        defaultAssignee={config?.defaultAssignee}
+        defaultAssignee={(config?.defaultAssignee?.length ?? 0) > 0 ? config?.defaultAssignee : config?.gitUserName ? [config.gitUserName] : undefined}
         dateFormat={config?.dateFormat}
         documentBaseUrl={config?.documentBaseUrl}
       />
