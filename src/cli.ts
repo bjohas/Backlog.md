@@ -127,6 +127,7 @@ const CONFIG_GET_KEYS = [
 	"dateFormat",
 	"maxColumnWidth",
 	"taskListPaneWidth",
+	"documentBaseUrl",
 	"defaultPort",
 	"autoOpenBrowser",
 	"remoteOperations",
@@ -146,6 +147,7 @@ const CONFIG_SET_KEYS = [
 	"dateFormat",
 	"maxColumnWidth",
 	"taskListPaneWidth",
+	"documentBaseUrl",
 	"autoOpenBrowser",
 	"defaultPort",
 	"remoteOperations",
@@ -4664,7 +4666,7 @@ agentsCmd
 
 // Config command group
 const CONFIG_AVAILABLE_KEYS =
-	"Available keys: defaultEditor, projectName, defaultAssignee, defaultStatus, statuses, labels, priorities, types, milestones, definitionOfDone, dateFormat, maxColumnWidth, taskListPaneWidth, defaultPort, autoOpenBrowser, hideEmptyColumns, remoteOperations, autoCommit, filesystemOnly, bypassGitHooks, zeroPaddedIds, checkActiveBranches, activeBranchDays";
+	"Available keys: defaultEditor, projectName, defaultAssignee, defaultStatus, statuses, labels, priorities, types, milestones, definitionOfDone, dateFormat, maxColumnWidth, taskListPaneWidth, documentBaseUrl, defaultPort, autoOpenBrowser, hideEmptyColumns, remoteOperations, autoCommit, filesystemOnly, bypassGitHooks, zeroPaddedIds, checkActiveBranches, activeBranchDays";
 
 const configCmd = addHelpSchema(program.command("config"), {
 	reads: "Project Backlog.md configuration",
@@ -4826,6 +4828,9 @@ addHelpSchema(configCmd.command("get <key>"), {
 				case "taskListPaneWidth":
 					console.log(config.taskListPaneWidth?.toString() || "");
 					break;
+				case "documentBaseUrl":
+					console.log(config.documentBaseUrl || "");
+					break;
 				case "defaultPort":
 					console.log(config.defaultPort?.toString() || "");
 					break;
@@ -4929,6 +4934,19 @@ addHelpSchema(configCmd.command("set <key> <value>"), {
 						process.exit(1);
 					}
 					config.maxColumnWidth = width;
+					break;
+				}
+				case "documentBaseUrl": {
+					const trimmed = value.trim();
+					if (trimmed === "") {
+						config.documentBaseUrl = undefined;
+						break;
+					}
+					if (!/^https?:\/\/\S+$/.test(trimmed)) {
+						console.error("documentBaseUrl must be an absolute http(s) URL, or empty to clear it");
+						process.exit(1);
+					}
+					config.documentBaseUrl = trimmed;
 					break;
 				}
 				case "taskListPaneWidth": {
@@ -5139,6 +5157,7 @@ addHelpSchema(configCmd.command("list"), {
 			console.log(`  dateFormat: ${config.dateFormat}`);
 			console.log(`  maxColumnWidth: ${config.maxColumnWidth || "(not set)"}`);
 			console.log(`  taskListPaneWidth: ${config.taskListPaneWidth || "(not set)"}`);
+			console.log(`  documentBaseUrl: ${config.documentBaseUrl || "(not set)"}`);
 			console.log(`  autoOpenBrowser: ${config.autoOpenBrowser ?? "(not set)"}`);
 			console.log(`  hideEmptyColumns: ${config.hideEmptyColumns ?? "(not set)"}`);
 			console.log(`  defaultPort: ${config.defaultPort ?? "(not set)"}`);
