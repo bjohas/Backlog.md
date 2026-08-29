@@ -83,6 +83,11 @@ const Settings: React.FC = () => {
 			errors.taskListPaneWidth = 'Task list pane width must be between 10 and 90';
 		}
 
+		// Same rule as the CLI: absolute http(s), or empty to clear
+		if (config.documentBaseUrl && !/^https?:\/\/\S+$/.test(config.documentBaseUrl.trim())) {
+			errors.documentBaseUrl = 'Document base URL must be an absolute http(s) URL';
+		}
+
 
 		setValidationErrors(errors);
 		return Object.keys(errors).length === 0;
@@ -426,6 +431,26 @@ const Settings: React.FC = () => {
 								)}
 								<p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
 									Percentage of the terminal the task list occupies beside the detail pane
+								</p>
+							</div>
+
+							<div>
+								<label htmlFor="documentBaseUrl" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+									Document Base URL
+								</label>
+								<input
+									id="documentBaseUrl"
+									type="url"
+									placeholder="https://example.com/w/org/project"
+									value={config.documentBaseUrl ?? ''}
+									onChange={(e) => handleInputChange('documentBaseUrl', e.target.value.trim() === '' ? undefined : e.target.value)}
+									className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-900 dark:text-gray-100 bg-white dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-stone-500 dark:focus:ring-stone-400 transition-colors duration-200"
+								/>
+								{validationErrors.documentBaseUrl && (
+									<p className="mt-1 text-sm text-red-600 dark:text-red-400">{validationErrors.documentBaseUrl}</p>
+								)}
+								<p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+									Repo-relative links and documentation paths open against this address
 								</p>
 							</div>
 
