@@ -58,6 +58,37 @@ function toSourceOffset(offset: number, escapes: number[]): number {
 	return offset - shift;
 }
 
+type CheckboxSpanInputProps = React.InputHTMLAttributes<HTMLInputElement> & { node?: unknown };
+
+/**
+ * Our checkbox spans are controlled (`checked`) with no `onChange` - the
+ * markdown source is the state, not the DOM - so a click's native toggle is
+ * reverted by preventDefault() and the real change comes from a later
+ * re-render. Without a `key` tied to that value, React can reconcile the
+ * existing <input> in place and leave its native `checked` DOM property out
+ * of sync with the prop (observed: unchecking a box that started checked, or
+ * a box checked earlier in the same session, left it visually checked even
+ * though the underlying markdown had correctly flipped). Keying by the
+ * checked value forces a fresh DOM node on every change instead.
+ */
+function CheckboxSpanInput({ node: _node, className, checked, ...rest }: CheckboxSpanInputProps) {
+	if (typeof className === "string" && className.includes("backlog-checkbox-span")) {
+		return (
+			<input
+				key={`${(rest as Record<string, string | undefined>)["data-checkbox-offset"] ?? "readonly"}-${checked ? "1" : "0"}`}
+				className={className}
+				checked={checked}
+				{...rest}
+			/>
+		);
+	}
+	return (
+		<input className={className} checked={checked} {...rest} />
+	);
+}
+
+const MARKDOWN_COMPONENTS = { input: CheckboxSpanInput };
+
 function keepHashLinksInCurrentRoute(url: string, key: string): string {
 	if (key !== "href" || !url.startsWith("#") || typeof window === "undefined") {
 		return url;
@@ -129,6 +160,7 @@ export default function MermaidMarkdown({ source, onToggleCheckbox }: Props) {
 				source={safeSource}
 				urlTransform={urlTransform}
 				remarkPlugins={remarkPlugins}
+				components={MARKDOWN_COMPONENTS}
 			/>
 		</div>
 	);
