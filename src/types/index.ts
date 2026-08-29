@@ -321,6 +321,13 @@ export interface BacklogConfig {
 	maxColumnWidth?: number;
 	/** Base URL that relative documentation paths are opened against, e.g. an external editor. */
 	documentBaseUrl?: string;
+	/**
+	 * The web server's `git config user.name`, when available. Computed on each
+	 * `/api/config` read; never parsed from or written to the config file - a
+	 * fallback default assignee/comment author for projects with no
+	 * defaultAssignee configured.
+	 */
+	gitUserName?: string;
 	/** Width of the task-list pane in the TUI list view, as a percentage of the terminal width (10-90). Defaults to 40. */
 	taskListPaneWidth?: number;
 	taskResolutionStrategy?: "most_recent" | "most_progressed";
