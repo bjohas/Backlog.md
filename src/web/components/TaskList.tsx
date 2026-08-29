@@ -43,7 +43,7 @@ interface TaskListProps {
 	isLoading?: boolean;
 }
 
-type TaskSortColumn = "id" | "title" | "status" | "priority" | "ordinal" | "milestone" | "created" | "updated";
+type TaskSortColumn = "id" | "title" | "status" | "priority" | "ordinal" | "assignee" | "milestone" | "created" | "updated";
 type SortDirection = "asc" | "desc";
 
 const TASK_SORT_COLUMNS: readonly TaskSortColumn[] = [
@@ -52,6 +52,7 @@ const TASK_SORT_COLUMNS: readonly TaskSortColumn[] = [
 	"status",
 	"priority",
 	"ordinal",
+	"assignee",
 	"milestone",
 	"created",
 	"updated",
@@ -819,6 +820,14 @@ const TaskList: React.FC<TaskListProps> = ({
 					}
 					break;
 				}
+				case "assignee": {
+					// First assignee only, like the initials badge shown in the cell;
+					// unassigned (empty string) sorts consistently to one end.
+					const assigneeA = a.assignee?.[0] ?? "";
+					const assigneeB = b.assignee?.[0] ?? "";
+					result = withDirection(compareText(assigneeA, assigneeB));
+					break;
+				}
 				case "milestone": {
 					const milestoneA = getMilestoneLabel(a.milestone, milestoneEntities);
 					const milestoneB = getMilestoneLabel(b.milestone, milestoneEntities);
@@ -1093,7 +1102,7 @@ const TaskList: React.FC<TaskListProps> = ({
 										{renderSortableHeader("Priority", "priority")}
 										{renderSortableHeader("Ordinal", "ordinal")}
 										<th className="px-3 py-2">Labels</th>
-										<th className="px-3 py-2">Assignee</th>
+										{renderSortableHeader("Assignee", "assignee")}
 										{renderSortableHeader("Milestone", "milestone")}
 										{renderSortableHeader("Created", "created")}
 										{renderSortableHeader("Updated", "updated")}
