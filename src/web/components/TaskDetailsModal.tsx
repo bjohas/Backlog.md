@@ -273,6 +273,7 @@ export const TaskDetailsModal: React.FC<Props> = ({
   const [commentsChanged, setCommentsChanged] = useState(false);
   const preserveEditModeAfterCommentRefresh = useRef(false);
   const [composingComment, setComposingComment] = useState(false);
+  const [staleCheckboxNotice, setStaleCheckboxNotice] = useState<string | null>(null);
   const commentBodyRef = useRef<HTMLTextAreaElement | null>(null);
   const [finalSummary, setFinalSummary] = useState(task?.finalSummary || "");
   const [criteria, setCriteria] = useState<AcceptanceCriterion[]>(task?.acceptanceCriteriaItems || []);
@@ -672,6 +673,7 @@ export const TaskDetailsModal: React.FC<Props> = ({
     setCommentBody("");
     setCommentAuthor("");
     setComposingComment(false);
+    setStaleCheckboxNotice(null);
     setCommentSaving(false);
     setCommentsChanged(false);
     setFinalSummary(nextFormState.finalSummary);
@@ -960,10 +962,22 @@ export const TaskDetailsModal: React.FC<Props> = ({
     if (demoting || saving) return;
     if (!task) return; // Can't toggle in create mode
     if (isFromOtherBranch) return; // Can't toggle for cross-branch tasks
-    const next = toggleCheckboxSpanAt(value, offset);
-    if (next === null) return; // stale offset: leave the document alone
-    setValue(next);
+
+    setStaleCheckboxNotice(null);
     try {
+      // A toggle rewrites the whole section, so base it on what is on disk now
+      // rather than on a copy that may have gone stale while the page slept.
+      const fresh = await apiClient.fetchTask(task.id);
+      const current = (fresh[field] ?? "") as string;
+      const next = toggleCheckboxSpanAt(current, offset);
+      if (next === null) {
+        // The text moved under us; show what it says now instead of guessing.
+        setValue(current);
+        if (onSaved) await onSaved();
+        setStaleCheckboxNotice("This task changed elsewhere, so the box was not ticked. The text above is now current - tap it again.");
+        return;
+      }
+      setValue(next);
       await apiClient.updateTask(task.id, { [field]: next } as TaskUpdatePayload);
       if (onSaved) await onSaved();
     } catch (err) {
@@ -1320,6 +1334,9 @@ export const TaskDetailsModal: React.FC<Props> = ({
     >
       {error && (
         <div role="alert" className="mb-3 text-sm text-red-600 dark:text-red-400">{error}</div>
+      )}
+      {staleCheckboxNotice && (
+        <div role="status" className="mb-3 text-sm text-amber-700 dark:text-amber-400">{staleCheckboxNotice}</div>
       )}
 
 		<fieldset disabled={demoting} className="contents" aria-busy={demoting}>
