@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef } from "react";
 import MDEditor from "@uiw/react-md-editor";
+import { useDocumentBaseUrl } from "../contexts/DocumentBaseUrlContext";
 import { useTaskIdIndex } from "../contexts/TaskIdIndexContext";
 import { createCheckboxSpanPlugin } from "../utils/checkbox-spans";
+import { resolveRepoLinkUrl } from "../utils/document-url";
 import { renderMermaidIn } from "../utils/mermaid";
 import { createTaskIdLinkPlugin } from "../utils/task-id-links";
 
@@ -63,10 +65,24 @@ function keepHashLinksInCurrentRoute(url: string, key: string): string {
 	return `${window.location.pathname}${window.location.search}${url}`;
 }
 
+function createUrlTransform(documentBaseUrl?: string) {
+	return (url: string, key: string): string => {
+		// Repo-relative links point at files the app does not serve; send them to
+		// the configured viewer instead of leaving a dead in-app link.
+		if (key === "href") {
+			const external = resolveRepoLinkUrl(url, documentBaseUrl);
+			if (external) return external;
+		}
+		return keepHashLinksInCurrentRoute(url, key);
+	};
+}
+
 export default function MermaidMarkdown({ source, onToggleCheckbox }: Props) {
 	const ref = useRef<HTMLDivElement | null>(null);
 	const { text: safeSource, escapes } = useMemo(() => sanitizeMarkdownSource(source), [source]);
 	const taskIdIndex = useTaskIdIndex();
+	const documentBaseUrl = useDocumentBaseUrl();
+	const urlTransform = useMemo(() => createUrlTransform(documentBaseUrl), [documentBaseUrl]);
 	const interactiveCheckboxes = Boolean(onToggleCheckbox);
 	const remarkPlugins = useMemo(
 		() => [createTaskIdLinkPlugin(taskIdIndex), createCheckboxSpanPlugin(interactiveCheckboxes)],
@@ -110,7 +126,7 @@ export default function MermaidMarkdown({ source, onToggleCheckbox }: Props) {
 		<div ref={ref} className="wmde-markdown">
 			<MDEditor.Markdown
 				source={safeSource}
-				urlTransform={keepHashLinksInCurrentRoute}
+				urlTransform={urlTransform}
 				remarkPlugins={remarkPlugins}
 			/>
 		</div>
