@@ -1,3 +1,4 @@
+// [FORK] Popup refreshes with the updated task after an external-editor edit (BACK-644). See FORK.md; git diff upstream/main..main -- src/ui/board.ts
 import type { BoxInterface, ListInterface, ScreenInterface } from "neo-neo-bblessed";
 import { box, list } from "neo-neo-bblessed";
 import {

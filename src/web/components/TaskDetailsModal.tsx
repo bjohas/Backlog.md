@@ -1,3 +1,4 @@
+// [FORK] Adds checkbox-span toggling (fresh-fetch before write), header/preview Comment actions, and Copy ID. See FORK.md; git diff upstream/main..main -- src/web/components/TaskDetailsModal.tsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isLocalEditableTask, type AcceptanceCriterion, type Milestone, type Task, type TaskComment } from "../../types";
 import Modal from "./Modal";

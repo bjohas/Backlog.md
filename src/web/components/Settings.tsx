@@ -1,3 +1,4 @@
+// [FORK] Adds Task List Pane Width and Document Base URL fields to Advanced Settings. See FORK.md; git diff upstream/main..main -- src/web/components/Settings.tsx
 import React, { useState, useEffect } from 'react';
 import { apiClient } from '../lib/api';
 import { SuccessToast } from './SuccessToast';

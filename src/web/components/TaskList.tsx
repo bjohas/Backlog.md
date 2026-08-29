@@ -1,3 +1,4 @@
+// [FORK] Adds maximize mode, panel search, Updated column, and persisted sort to the All Tasks table. See FORK.md; git diff upstream/main..main -- src/web/components/TaskList.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { apiClient } from "../lib/api";

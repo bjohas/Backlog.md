@@ -1,3 +1,4 @@
+// [FORK] Recognizes task_list_pane_width and document_base_url as valid config keys. See FORK.md; git diff upstream/main..main -- src/utils/config-watcher.ts
 import { type FSWatcher, unwatchFile, watch, watchFile } from "node:fs";
 import { basename, dirname } from "node:path";
 import type { Core } from "../core/backlog.ts";
