@@ -1,11 +1,11 @@
 ---
 id: BACK-660
 title: Apply checkbox toggles to freshly fetched task text
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-29 07:54'
-updated_date: '2026-08-29 07:54'
+updated_date: '2026-08-29 07:58'
 labels: []
 dependencies: []
 ordinal: 295000
@@ -19,17 +19,17 @@ A checkbox toggle sends the whole description (or notes) section, so a page whos
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Toggling re-fetches the task and applies the change to the freshly fetched section text
-- [ ] #2 An edit made on disk while the page was stale survives a subsequent toggle
-- [ ] #3 When the fresh text no longer has a checkbox span at that offset the write is skipped, the modal refreshes, and the reader is told to try again
-- [ ] #4 Toggling still works normally when nothing changed underneath
+- [x] #1 Toggling re-fetches the task and applies the change to the freshly fetched section text
+- [x] #2 An edit made on disk while the page was stale survives a subsequent toggle
+- [x] #3 When the fresh text no longer has a checkbox span at that offset the write is skipped, the modal refreshes, and the reader is told to try again
+- [x] #4 Toggling still works normally when nothing changed underneath
 <!-- AC:END -->
 
 ## Definition of Done
 <!-- DOD:BEGIN -->
-- [ ] #1 bunx tsc --noEmit passes when TypeScript touched
-- [ ] #2 bun run check . passes when formatting/linting touched
-- [ ] #3 bun test (or scoped test) passes
+- [x] #1 bunx tsc --noEmit passes when TypeScript touched
+- [x] #2 bun run check . passes when formatting/linting touched
+- [x] #3 bun test (or scoped test) passes
 <!-- DOD:END -->
 
 ## Implementation Plan
@@ -39,3 +39,15 @@ A checkbox toggle sends the whole description (or notes) section, so a page whos
 2. Keep toggleCheckboxSpanAt as the guard: a null result means the document moved - refresh the modal state from the fetched task and surface a brief notice instead of writing.
 3. Verify with the stale-page race that previously clobbered, plus the normal path and the shifted-document path.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Re-ran the same three-scenario probe that found the bug. Before: stale-page tick lost the on-disk edit. After: socket-alive tick still applies and the other edit survives; stale-page tick preserves the other edit and declines to write; the comment path stays safe (it appends server-side). Follow-up check: the amber notice appears, the refreshed text is shown, and tapping again ticks the box with the other edit intact. The notice needed its own state because a data refresh clears `error`.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Checkbox toggles now re-read the task and apply to the fresh section text, so a stale page can no longer overwrite on-disk edits; a moved document declines the write, refreshes and prompts a retry. Verified with the race that previously clobbered.
+<!-- SECTION:FINAL_SUMMARY:END -->
