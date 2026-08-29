@@ -1,3 +1,4 @@
+// [FORK] Adds an OSC 52 fallback for yank over SSH when no local clipboard tool succeeds (BACK-642). See FORK.md; git diff upstream/main..main -- src/utils/clipboard.ts
 /**
  * Lightweight clipboard utility for copying text to the system clipboard.
  * Supports macOS (pbcopy), Windows (clip.exe), and Linux (xclip/wl-copy/xsel),

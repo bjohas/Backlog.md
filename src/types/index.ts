@@ -1,3 +1,4 @@
+// [FORK] Adds BacklogConfig.taskListPaneWidth and .documentBaseUrl. See FORK.md; git diff upstream/main..main -- src/types/index.ts
 export type TaskStatus = string;
 
 /**

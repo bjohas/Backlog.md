@@ -1,3 +1,4 @@
+// [FORK] Wires DocumentBaseUrlProvider and passes documentBaseUrl into TaskDetailsModal. See FORK.md; git diff upstream/main..main -- src/web/App.tsx
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useMatch, useNavigate } from 'react-router-dom';
 import Layout from './components/Layout';

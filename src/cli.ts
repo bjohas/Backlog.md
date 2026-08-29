@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// [FORK] Adds config get/set/list for taskListPaneWidth and documentBaseUrl. See FORK.md; git diff upstream/main..main -- src/cli.ts
 
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { stdin as input } from "node:process";

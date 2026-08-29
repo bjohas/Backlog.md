@@ -1,3 +1,4 @@
+// [FORK] Renders checkbox spans and rewrites repo-relative links against documentBaseUrl. See FORK.md; git diff upstream/main..main -- src/web/components/MermaidMarkdown.tsx
 import { useEffect, useMemo, useRef } from "react";
 import MDEditor from "@uiw/react-md-editor";
 import { useDocumentBaseUrl } from "../contexts/DocumentBaseUrlContext";

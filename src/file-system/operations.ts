@@ -1,3 +1,4 @@
+// [FORK] Parses/serializes task_list_pane_width and document_base_url. See FORK.md; git diff upstream/main..main -- src/file-system/operations.ts
 import { mkdir, rename, stat, unlink } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import lockfile from "proper-lockfile";

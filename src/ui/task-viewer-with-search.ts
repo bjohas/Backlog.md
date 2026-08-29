@@ -1,3 +1,4 @@
+// [FORK] Task-list pane width is configurable via taskListPaneWidth (BACK-641). See FORK.md; git diff upstream/main..main -- src/ui/task-viewer-with-search.ts
 /* Task viewer with search/filter header UI */
 
 import { stdout as output } from "node:process";
