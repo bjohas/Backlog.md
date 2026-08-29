@@ -78,6 +78,11 @@ const Settings: React.FC = () => {
 			errors.defaultPort = 'Port must be between 1 and 65535';
 		}
 
+		// Same range the CLI enforces for this key
+		if (config.taskListPaneWidth !== undefined && (config.taskListPaneWidth < 10 || config.taskListPaneWidth > 90)) {
+			errors.taskListPaneWidth = 'Task list pane width must be between 10 and 90';
+		}
+
 
 		setValidationErrors(errors);
 		return Object.keys(errors).length === 0;
@@ -400,6 +405,27 @@ const Settings: React.FC = () => {
 								/>
 								<p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
 									Maximum width for text columns in CLI output
+								</p>
+							</div>
+
+							<div>
+								<label htmlFor="taskListPaneWidth" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+									Task List Pane Width
+								</label>
+								<input
+									id="taskListPaneWidth"
+									type="number"
+									min="10"
+									max="90"
+									value={config.taskListPaneWidth ?? 40}
+									onChange={(e) => handleInputChange('taskListPaneWidth', parseInt(e.target.value) || 40)}
+									className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-900 dark:text-gray-100 bg-white dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-stone-500 dark:focus:ring-stone-400 transition-colors duration-200"
+								/>
+								{validationErrors.taskListPaneWidth && (
+									<p className="mt-1 text-sm text-red-600 dark:text-red-400">{validationErrors.taskListPaneWidth}</p>
+								)}
+								<p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+									Percentage of the terminal the task list occupies beside the detail pane
 								</p>
 							</div>
 
