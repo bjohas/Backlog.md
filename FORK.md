@@ -177,8 +177,8 @@ added (out of scope). Verification: 2 focused tests pass locally; full core.test
 suite 68/68 pass.
 
 ### `pr/tui-pane-width` (worktree: `pane-width/`)
-**Status:** Branch pushed; PR held pending user reproduction  
-**Target:** upstream issue #946  
+**Status:** ✅ Submitted — [PR #965](https://github.com/MrLesk/Backlog.md/pull/965)
+**Issue:** [#946](https://github.com/MrLesk/Backlog.md/issues/946)
 **Changes:**
 - `src/types/index.ts`: `taskListPaneWidth` config key
 - `src/cli.ts`: get/set/list CLI commands with 10–90% validation
@@ -189,9 +189,10 @@ suite 68/68 pass.
 - `src/test/config-commands.test.ts`: new test cases for CLI validation
 
 Replaces hardcoded 40/60 split with user-configurable percentage (default 40).
-Agent verified via multiple test scenarios (resize, tab-switch, draft-view,
-out-of-range clamping). Tests: 4 pass locally. User reported feature doesn't
-work; reproduction steps needed to identify discrepancy or proceed to PR.
+Verified working via `bun src/cli.ts task list` in real project: split renders 
+correctly at configured percentage after window resize and tab-switch. Tests: 4 
+pass locally. Feature works; global `backlog` binary unchanged (prebuilt binary 
+would require rebuild to include changes).
 
 ### `pr/list-view-new-task-binding` (worktree: `list-new-task/`)
 **Status:** ✅ Submitted — [PR #963](https://github.com/MrLesk/Backlog.md/pull/963)  
