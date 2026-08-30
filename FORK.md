@@ -154,7 +154,7 @@ only source and test changes required for its PR, with no fork-specific metadata
 task files, or config changes.
 
 ### `pr/osc52-clipboard` (worktree: `osc52/`)
-**Status:** ✅ Submitted — PR #961  
+**Status:** ✅ Submitted — [PR #961](https://github.com/MrLesk/Backlog.md/pull/961)
 **Target:** upstream issue #947  
 **Changes:**
 - `src/utils/clipboard.ts`: OSC 52 fallback + tmux passthrough support
@@ -192,3 +192,20 @@ Replaces hardcoded 40/60 split with user-configurable percentage (default 40).
 Agent verified via multiple test scenarios (resize, tab-switch, draft-view,
 out-of-range clamping). Tests: 4 pass locally. User reported feature doesn't
 work; reproduction steps needed to identify discrepancy or proceed to PR.
+
+### `pr/list-view-new-task-binding` (worktree: `list-new-task/`)
+**Status:** ✅ Submitted — [PR #963](https://github.com/MrLesk/Backlog.md/pull/963)  
+**Issue:** [#964](https://github.com/MrLesk/Backlog.md/issues/964)  
+**Changes:**
+- `src/ui/task-viewer-with-search.ts`: 'n'/'N'/'S-n' binding + taskComposer support + watcher guards
+- `src/cli.ts`: pass taskComposer handler to list view
+- `src/ui/unified-view.ts`: pass taskComposer handler to list view
+- `src/ui/components/help-popup.ts`: add 'N' binding to help text
+- `src/ui/footer-content.ts`: add [N] hint to footer
+- `src/test/tui-task-list-new-task-binding.test.ts`: 5 focused tests
+
+Implements task creation in TUI list view with same UX as board view. Includes 
+`taskCreationOpen`/`taskCreationPendingUpdate` guard (identical to board.ts) to 
+prevent duplicate-task race condition when watcher updates occur while composer 
+is open. Bonus fix: resolves focus-loss bug when applyFilters() destroys/recreates 
+the list widget during task creation. Tests: 5 pass locally.
