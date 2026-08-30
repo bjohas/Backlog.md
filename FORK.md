@@ -144,4 +144,54 @@ call it.
 - No fixed sync cadence yet — `upstream/main` has not moved since the fork
   point, so there's nothing to rebase against. Once it does, re-run
   `git log --oneline main..upstream/main` and diff-review before merging
-  their changes in, since 12 shared files now carry `[FORK]` edits.
+
+## Upstream PR candidates (clean branches, not in this fork)
+
+Three focused, independent branches based on `upstream/main` (commit 9a42e89),
+created for contribution back to MrLesk/Backlog.md. Each branch lives in its own
+worktree under `/home/bjohas/development/git/Backlog.md-worktrees/` and contains
+only source and test changes required for its PR, with no fork-specific metadata,
+task files, or config changes.
+
+### `pr/osc52-clipboard` (worktree: `osc52/`)
+**Status:** Ready to PR  
+**Target:** upstream issue #947  
+**Changes:**
+- `src/utils/clipboard.ts`: OSC 52 fallback + tmux passthrough support
+- `src/test/clipboard-osc52.test.ts`: focused unit tests (6 cases)
+
+Implements clipboard fallback for SSH/headless environments where no native OS
+tool is available. Reuses fork's BACK-642 design; stripped fork-only artifacts
+and re-derived against current upstream. Behavior: local tools unchanged;
+fallback only after all OS tools fail.
+
+### `pr/tui-pane-width` (worktree: `pane-width/`)
+**Status:** Implementation complete; awaiting user reproduction of reported issue  
+**Target:** upstream issue #946  
+**Changes:**
+- `src/types/index.ts`: `taskListPaneWidth` config key
+- `src/cli.ts`: get/set/list CLI commands with 10–90% validation
+- `src/file-system/operations.ts`: parseConfig/serializeConfig round-trip
+- `src/utils/config-watcher.ts`: external-edit guard
+- `src/ui/task-viewer-with-search.ts`: wired to list/detail split
+- `src/test/task-list-pane-width.test.ts`: new; defaults, clamping, fallback
+- `src/test/config-commands.test.ts`: new test cases for CLI validation
+
+Replaces hardcoded 40/60 split with user-configurable percentage (default 40).
+Agent verified via `bun src/cli.ts task list` in a real project; all tested code
+paths work correctly. User report that feature doesn't work is under
+investigation — possible that global `backlog` binary (unpatched) was used
+rather than worktree source. Awaiting exact repro steps.
+
+### `pr/default-reporter` (worktree: `default-reporter/`)
+**Status:** Ready to PR  
+**Target:** upstream issue #941 (option 1: apply existing defaultReporter)  
+**Changes:**
+- `src/core/backlog.ts`: wire config.defaultReporter into createTaskFromInput
+- `src/test/core.test.ts`: new test cases (5 expects, both creation paths)
+
+Applies `defaultReporter` config value to every newly created task/draft, same
+way `defaultAssignee` flows through. No CLI `--reporter` flag or config get/set
+exposure added (out of scope). Verification: new tests pass; full core.test.ts
+suite 68/68 pass; broader integration tests show 163/164 passing (1 pre-existing
+YAML tab-indent failure unrelated to this change).
