@@ -13,11 +13,6 @@ const outdir = process.env.BACKLOG_BUILD_OUTDIR;
 const version = process.env.BACKLOG_BUILD_VERSION ?? packageJson.version;
 const target = process.env.BACKLOG_BUILD_TARGET;
 const outputDirectory = outdir ?? dirname(outfile);
-const installLocal = process.env.BACKLOG_INSTALL_LOCAL === "1";
-
-if (installLocal && outdir) {
-	throw new Error("BACKLOG_INSTALL_LOCAL requires a compiled binary, not BACKLOG_BUILD_OUTDIR");
-}
 
 if (outputDirectory !== ".") {
 	await mkdir(outputDirectory, { recursive: true });
@@ -50,10 +45,10 @@ if (!result.success) {
 	process.exit(1);
 }
 
-if (installLocal) {
-	const result = await installLocalBinary(outfile);
+if (!outdir) {
+	const installResult = await installLocalBinary(outfile);
 	console.log(
-		result === "installed"
+		installResult === "installed"
 			? "Installed local backlog binary at ~/.local/bin/backlog"
 			: "Local backlog binary already installed at ~/.local/bin/backlog",
 	);
