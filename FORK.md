@@ -154,19 +154,30 @@ only source and test changes required for its PR, with no fork-specific metadata
 task files, or config changes.
 
 ### `pr/osc52-clipboard` (worktree: `osc52/`)
-**Status:** Ready to PR  
+**Status:** ✅ Submitted — PR #961  
 **Target:** upstream issue #947  
 **Changes:**
 - `src/utils/clipboard.ts`: OSC 52 fallback + tmux passthrough support
 - `src/test/clipboard-osc52.test.ts`: focused unit tests (6 cases)
 
 Implements clipboard fallback for SSH/headless environments where no native OS
-tool is available. Reuses fork's BACK-642 design; stripped fork-only artifacts
-and re-derived against current upstream. Behavior: local tools unchanged;
-fallback only after all OS tools fail.
+tool is available. Behavior: local tools unchanged; fallback only after all OS
+tools fail. Tests: 5 pass locally.
+
+### `pr/default-reporter` (worktree: `default-reporter/`)
+**Status:** ✅ Submitted — PR #962  
+**Target:** upstream issue #941 (option 1: apply existing defaultReporter)  
+**Changes:**
+- `src/core/backlog.ts`: wire config.defaultReporter into createTaskFromInput
+- `src/test/core.test.ts`: new test cases (5 expects, both creation paths)
+
+Applies `defaultReporter` config value to every newly created task/draft, same
+way `defaultAssignee` flows through. No CLI flag or config get/set exposure
+added (out of scope). Verification: 2 focused tests pass locally; full core.test
+suite 68/68 pass.
 
 ### `pr/tui-pane-width` (worktree: `pane-width/`)
-**Status:** Implementation complete; awaiting user reproduction of reported issue  
+**Status:** Branch pushed; PR held pending user reproduction  
 **Target:** upstream issue #946  
 **Changes:**
 - `src/types/index.ts`: `taskListPaneWidth` config key
@@ -178,20 +189,6 @@ fallback only after all OS tools fail.
 - `src/test/config-commands.test.ts`: new test cases for CLI validation
 
 Replaces hardcoded 40/60 split with user-configurable percentage (default 40).
-Agent verified via `bun src/cli.ts task list` in a real project; all tested code
-paths work correctly. User report that feature doesn't work is under
-investigation — possible that global `backlog` binary (unpatched) was used
-rather than worktree source. Awaiting exact repro steps.
-
-### `pr/default-reporter` (worktree: `default-reporter/`)
-**Status:** Ready to PR  
-**Target:** upstream issue #941 (option 1: apply existing defaultReporter)  
-**Changes:**
-- `src/core/backlog.ts`: wire config.defaultReporter into createTaskFromInput
-- `src/test/core.test.ts`: new test cases (5 expects, both creation paths)
-
-Applies `defaultReporter` config value to every newly created task/draft, same
-way `defaultAssignee` flows through. No CLI `--reporter` flag or config get/set
-exposure added (out of scope). Verification: new tests pass; full core.test.ts
-suite 68/68 pass; broader integration tests show 163/164 passing (1 pre-existing
-YAML tab-indent failure unrelated to this change).
+Agent verified via multiple test scenarios (resize, tab-switch, draft-view,
+out-of-range clamping). Tests: 4 pass locally. User reported feature doesn't
+work; reproduction steps needed to identify discrepancy or proceed to PR.
