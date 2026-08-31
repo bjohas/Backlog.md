@@ -97,7 +97,9 @@ function extractConfigKeyYaml(content: string, key: string): string | undefined 
 		return undefined;
 	}
 
-	const startIndent = keyIndent(lines[startIndex] ?? "") ?? 0;
+	const startLine = lines[startIndex] ?? "";
+	const indentPrefix = startLine.match(keyPattern)?.[1] ?? "";
+	const startIndent = indentPrefix.length;
 	const collected: string[] = [];
 
 	for (let index = startIndex; index < lines.length; index++) {
@@ -114,7 +116,10 @@ function extractConfigKeyYaml(content: string, key: string): string | undefined 
 		collected.push(line);
 	}
 
-	return collected.join("\n");
+	if (startIndent === 0) {
+		return collected.join("\n");
+	}
+	return collected.map((line) => (line.startsWith(indentPrefix) ? line.slice(indentPrefix.length) : line)).join("\n");
 }
 
 const CONFIG_VALUE_ERROR_NAME = "ConfigValueError";
