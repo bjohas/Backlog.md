@@ -133,6 +133,7 @@ const CONFIG_GET_KEYS = [
 	"autoOpenBrowser",
 	"remoteOperations",
 	"autoCommit",
+	"guardedTaskPublish",
 	"filesystemOnly",
 	"bypassGitHooks",
 	"zeroPaddedIds",
@@ -153,6 +154,7 @@ const CONFIG_SET_KEYS = [
 	"defaultPort",
 	"remoteOperations",
 	"autoCommit",
+	"guardedTaskPublish",
 	"filesystemOnly",
 	"bypassGitHooks",
 	"zeroPaddedIds",
@@ -4667,7 +4669,7 @@ agentsCmd
 
 // Config command group
 const CONFIG_AVAILABLE_KEYS =
-	"Available keys: defaultEditor, projectName, defaultAssignee, defaultStatus, statuses, labels, priorities, types, milestones, definitionOfDone, dateFormat, maxColumnWidth, taskListPaneWidth, documentBaseUrl, defaultPort, autoOpenBrowser, hideEmptyColumns, remoteOperations, autoCommit, filesystemOnly, bypassGitHooks, zeroPaddedIds, checkActiveBranches, activeBranchDays";
+	"Available keys: defaultEditor, projectName, defaultAssignee, defaultStatus, statuses, labels, priorities, types, milestones, definitionOfDone, dateFormat, maxColumnWidth, taskListPaneWidth, documentBaseUrl, defaultPort, autoOpenBrowser, hideEmptyColumns, remoteOperations, autoCommit, guardedTaskPublish, filesystemOnly, bypassGitHooks, zeroPaddedIds, checkActiveBranches, activeBranchDays";
 
 const configCmd = addHelpSchema(program.command("config"), {
 	reads: "Project Backlog.md configuration",
@@ -4717,6 +4719,7 @@ const configCmd = addHelpSchema(program.command("config"), {
 			console.log(`  Auto open browser: ${mergedConfig.autoOpenBrowser ?? true}`);
 			console.log(`  Bypass git hooks: ${mergedConfig.bypassGitHooks ?? false}`);
 			console.log(`  Auto commit: ${mergedConfig.autoCommit ?? false}`);
+			console.log(`  Guarded task publish: ${mergedConfig.guardedTaskPublish ?? false}`);
 			console.log(`  Definition of Done defaults: ${(mergedConfig.definitionOfDone ?? []).join(" | ") || "(none)"}`);
 			if (completionResult) {
 				console.log(`  Shell completions: installed to ${completionResult.installPath}`);
@@ -4846,6 +4849,9 @@ addHelpSchema(configCmd.command("get <key>"), {
 					break;
 				case "autoCommit":
 					console.log(config.autoCommit?.toString() || "");
+					break;
+				case "guardedTaskPublish":
+					console.log(config.guardedTaskPublish?.toString() || "");
 					break;
 				case "filesystemOnly":
 					console.log(config.filesystemOnly?.toString() || "false");
@@ -4998,6 +5004,7 @@ addHelpSchema(configCmd.command("set <key> <value>"), {
 						config.remoteOperations = true;
 					} else if (boolValue === "false" || boolValue === "0" || boolValue === "no") {
 						config.remoteOperations = false;
+						config.guardedTaskPublish = false;
 					} else {
 						console.error("remoteOperations must be true or false");
 						process.exit(1);
@@ -5016,6 +5023,22 @@ addHelpSchema(configCmd.command("set <key> <value>"), {
 					}
 					break;
 				}
+				case "guardedTaskPublish": {
+					const boolValue = value.toLowerCase();
+					if (boolValue === "true" || boolValue === "1" || boolValue === "yes") {
+						if (config.remoteOperations === false || config.filesystemOnly) {
+							console.error("guardedTaskPublish requires remoteOperations to be enabled in a Git-backed project");
+							process.exit(1);
+						}
+						config.guardedTaskPublish = true;
+					} else if (boolValue === "false" || boolValue === "0" || boolValue === "no") {
+						config.guardedTaskPublish = false;
+					} else {
+						console.error("guardedTaskPublish must be true or false");
+						process.exit(1);
+					}
+					break;
+				}
 				case "filesystemOnly": {
 					const boolValue = value.toLowerCase();
 					if (boolValue === "true" || boolValue === "1" || boolValue === "yes") {
@@ -5023,6 +5046,7 @@ addHelpSchema(configCmd.command("set <key> <value>"), {
 						config.checkActiveBranches = false;
 						config.remoteOperations = false;
 						config.autoCommit = false;
+						config.guardedTaskPublish = false;
 						config.bypassGitHooks = false;
 					} else if (boolValue === "false" || boolValue === "0" || boolValue === "no") {
 						config.filesystemOnly = false;
@@ -5164,6 +5188,7 @@ addHelpSchema(configCmd.command("list"), {
 			console.log(`  defaultPort: ${config.defaultPort ?? "(not set)"}`);
 			console.log(`  remoteOperations: ${config.remoteOperations ?? "(not set)"}`);
 			console.log(`  autoCommit: ${config.autoCommit ?? "(not set)"}`);
+			console.log(`  guardedTaskPublish: ${config.guardedTaskPublish ?? "false"}`);
 			console.log(`  filesystemOnly: ${config.filesystemOnly ?? "false"}`);
 			console.log(`  bypassGitHooks: ${config.bypassGitHooks ?? "(not set)"}`);
 			console.log(`  zeroPaddedIds: ${config.zeroPaddedIds ?? "(disabled)"}`);

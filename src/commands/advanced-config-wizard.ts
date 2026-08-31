@@ -211,6 +211,7 @@ export async function runAdvancedConfigWizard({
 	let activeBranchDays = config?.activeBranchDays ?? 30;
 	let bypassGitHooks = config?.bypassGitHooks ?? false;
 	let autoCommit = config?.autoCommit ?? false;
+	let guardedTaskPublish = config?.guardedTaskPublish ?? false;
 	let zeroPaddedIds = config?.zeroPaddedIds;
 	let defaultEditor: string | undefined =
 		config?.defaultEditor ?? process.env.EDITOR ?? process.env.VISUAL ?? resolveEditor(null);
@@ -299,6 +300,22 @@ export async function runAdvancedConfigWizard({
 		{ onCancel },
 	);
 	autoCommit = Boolean(autoCommitPrompt.autoCommit ?? autoCommit);
+
+	if (remoteOperations) {
+		const guardedTaskPublishPrompt = await promptImpl(
+			{
+				type: "confirm",
+				name: "guardedTaskPublish",
+				message: "Publish task changes to the tracked Git branch?",
+				hint: "Requires a clean synchronized checkout; commits and pushes each task change",
+				initial: guardedTaskPublish,
+			},
+			{ onCancel },
+		);
+		guardedTaskPublish = Boolean(guardedTaskPublishPrompt.guardedTaskPublish ?? guardedTaskPublish);
+	} else {
+		guardedTaskPublish = false;
+	}
 
 	while (true) {
 		const zeroPaddingPrompt = await promptImpl(
@@ -638,6 +655,7 @@ export async function runAdvancedConfigWizard({
 			activeBranchDays,
 			bypassGitHooks,
 			autoCommit,
+			guardedTaskPublish,
 			zeroPaddedIds,
 			defaultEditor,
 			definitionOfDone,

@@ -527,6 +527,105 @@ export class GitOperations {
 		return status.trim() === "";
 	}
 
+	/**
+	 * Synchronize the current branch before a guarded task mutation.
+	 *
+	 * This deliberately permits only a fast-forward update. A clean textual
+	 * merge is still a user decision because it can combine unrelated source
+	 * and task changes in the active checkout.
+	 */
+	async prepareGuardedTaskPublish(): Promise<void> {
+		if (!(await this.isRepository())) {
+			throw new Error("Guarded task publishing requires a Git repository.");
+		}
+		if (!(await this.isClean())) {
+			throw new Error("Guarded task publishing requires a clean worktree and index.");
+		}
+
+		const upstream = await this.getCurrentBranchUpstream();
+		await this.fetchRequired(upstream.remote);
+
+		try {
+			await this.execGit(["merge", "--ff-only", upstream.ref]);
+		} catch {
+			throw new Error(
+				`Guarded task publishing cannot fast-forward ${upstream.branch} from ${upstream.ref}; reconcile the branch manually.`,
+			);
+		}
+
+		const [head, upstreamHead] = await Promise.all([this.resolveCommit("HEAD"), this.resolveCommit(upstream.ref)]);
+		if (!head || !upstreamHead || head !== upstreamHead) {
+			throw new Error(
+				`Guarded task publishing requires ${upstream.branch} to match ${upstream.ref}; publish or reconcile local commits first.`,
+			);
+		}
+	}
+
+	/**
+	 * Publish the current branch only to its configured upstream. A rejected
+	 * push is surfaced to the caller; it is never retried or reconciled.
+	 */
+	async publishGuardedTaskChanges(): Promise<void> {
+		const upstream = await this.getCurrentBranchUpstream();
+		try {
+			await this.execGit(["push", "--porcelain", upstream.remote, `HEAD:${upstream.mergeRef}`], {
+				timeoutMs: FETCH_TIMEOUT_MS,
+				env: {
+					GIT_TERMINAL_PROMPT: "0",
+					GCM_INTERACTIVE: "Never",
+				},
+			});
+		} catch {
+			throw new Error(
+				`Guarded task publishing could not push ${upstream.branch} to ${upstream.ref}; fetch and reconcile the branch manually.`,
+			);
+		}
+	}
+
+	private async getCurrentBranchUpstream(): Promise<{
+		branch: string;
+		mergeRef: string;
+		ref: string;
+		remote: string;
+	}> {
+		const { stdout: branchOutput } = await this.execGit(["branch", "--show-current"], { readOnly: true });
+		const branch = branchOutput.trim();
+		if (!branch) {
+			throw new Error("Guarded task publishing requires a checked-out branch.");
+		}
+
+		const [remoteResult, mergeResult] = await Promise.all([
+			this.execGit(["config", "--get", `branch.${branch}.remote`], { readOnly: true, acceptedExitCodes: [1] }),
+			this.execGit(["config", "--get", `branch.${branch}.merge`], { readOnly: true, acceptedExitCodes: [1] }),
+		]);
+		const remote = remoteResult.stdout.trim();
+		const mergeRef = mergeResult.stdout.trim();
+		if (!remote || !mergeRef.startsWith("refs/heads/")) {
+			throw new Error(`Guarded task publishing requires ${branch} to track a remote branch.`);
+		}
+
+		return {
+			branch,
+			mergeRef,
+			ref: `${remote}/${mergeRef.slice("refs/heads/".length)}`,
+			remote,
+		};
+	}
+
+	private async fetchRequired(remote: string): Promise<void> {
+		await this.loadConfigIfNeeded();
+		if (this.config?.remoteOperations === false) {
+			throw new Error("Guarded task publishing requires remote operations to be enabled.");
+		}
+		await this.execGit(["fetch", remote, "--prune", "--quiet"], {
+			timeoutMs: FETCH_TIMEOUT_MS,
+			env: {
+				GIT_TERMINAL_PROMPT: "0",
+				GCM_INTERACTIVE: "Never",
+			},
+		});
+	}
+
 	async getCurrentBranch(): Promise<string> {
 		if (!(await this.isRepository())) {
 			return "";

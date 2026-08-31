@@ -10,6 +10,7 @@ For getting started and the interactive wizard overview, see [README.md](README.
 | Get specific config | `backlog config get defaultEditor` |
 | Set config value | `backlog config set defaultEditor "code --wait"` |
 | Enable auto-commit | `backlog config set autoCommit true` |
+| Enable guarded task publishing | `backlog config set guardedTaskPublish true` |
 | Bypass git hooks | `backlog config set bypassGitHooks true` |
 | Enable cross-branch check | `backlog config set checkActiveBranches true` |
 | Set active branch days | `backlog config set activeBranchDays 30` |
@@ -33,6 +34,7 @@ Running `backlog config` with no arguments launches the interactive advanced wiz
 | `autoOpenBrowser` | Open browser automatically | `true`            |
 | `remoteOperations`| Enable remote git operations | `true`           |
 | `autoCommit`      | Automatically commit task changes | `false`       |
+| `guardedTaskPublish` | Require a clean, synchronized checkout before task mutations; commit and push their task files | `false` |
 | `bypassGitHooks`  | Skip git hooks when committing (uses --no-verify) | `false`       |
 | `zeroPaddedIds`   | Pad all IDs (tasks, docs, etc.) with leading zeros | `(disabled)`  |
 | `checkActiveBranches` | Check task states across active branches for accuracy | `true` |
@@ -47,6 +49,8 @@ Running `backlog config` with no arguments launches the interactive advanced wiz
 > **Note**: Set `remoteOperations: false` to work offline. This disables git fetch operations and loads tasks from local branches only, useful when working without network connectivity.
 
 > **Git Control**: By default, `autoCommit` is set to `false`, giving you full control over your git history. Task operations will modify files but won't automatically commit changes. Set `autoCommit: true` if you prefer automatic commits for each task operation.
+
+> **Guarded Task Publishing**: Set `guardedTaskPublish: true` to synchronize before each task mutation, then commit and push only its changed task file(s). It refuses to run when the worktree or index is dirty, the current branch lacks an upstream, or the branch cannot fast-forward to that upstream. It never automatically merges or rebases divergent work.
 
 > **Git Hooks**: If you have pre-commit hooks (like conventional commits or linters) that interfere with backlog.md's automated commits, set `bypassGitHooks: true` to skip them using the `--no-verify` flag.
 

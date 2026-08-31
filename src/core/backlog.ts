@@ -1122,6 +1122,31 @@ export class Core {
 		return config?.autoCommit ?? false;
 	}
 
+	private async getTaskMutationCommitMode(autoCommit?: boolean): Promise<{
+		autoCommit: boolean;
+		guardedPublish: boolean;
+	}> {
+		const config = await this.fs.loadConfig();
+		this.git.setConfig(config);
+		const guardedPublish = config?.guardedTaskPublish === true;
+		if (guardedPublish) {
+			if (config?.filesystemOnly) {
+				throw new Error("Guarded task publishing cannot run in a filesystem-only project.");
+			}
+			await this.git.prepareGuardedTaskPublish();
+			if (this.contentStore) await this.contentStore.refreshTasks();
+		}
+
+		return {
+			autoCommit: guardedPublish || (await this.shouldAutoCommit(autoCommit)),
+			guardedPublish,
+		};
+	}
+
+	private async publishGuardedTaskChanges(guardedPublish: boolean): Promise<void> {
+		if (guardedPublish) await this.git.publishGuardedTaskChanges();
+	}
+
 	async getGitOps() {
 		await this.ensureConfigLoaded();
 		return this.git;
@@ -1644,7 +1669,9 @@ export class Core {
 		// assignee replaces it entirely, and an explicit empty list means "unassigned".
 		const resolvedAssignees =
 			input.assignee === undefined ? (normalizeStringList(config?.defaultAssignee) ?? []) : normalizedAssignees;
-		const autoCommitEnabled = await this.shouldAutoCommit(autoCommit);
+		const mutationCommitMode = isDraft
+			? { autoCommit: await this.shouldAutoCommit(autoCommit), guardedPublish: false }
+			: await this.getTaskMutationCommitMode(autoCommit);
 
 		const { task, write } = await this.withCreateLock(async () => {
 			const parentTaskId = requestedParentTaskId
@@ -1688,7 +1715,9 @@ export class Core {
 			const targetContent = await this.readFileIfPresent(targetPath);
 			const previousPath = targetContent ? targetPath : resolvedPreviousPath;
 			const previousContent = targetContent ?? (await this.readFileIfPresent(resolvedPreviousPath));
-			const previousIndexEntries = autoCommitEnabled ? await this.git.getIndexEntries(targetPath) : undefined;
+			const previousIndexEntries = mutationCommitMode.autoCommit
+				? await this.git.getIndexEntries(targetPath)
+				: undefined;
 			const filePath = await this.writePreparedTask(task, isDraft);
 			const createdContent = await readFile(filePath);
 			const write: CreatedTaskWrite = {
@@ -1704,9 +1733,9 @@ export class Core {
 			};
 		});
 
+		let savedTask: Task | null;
 		try {
-			const savedTask = await this.finalizeCreatedTask(task, write.filePath, isDraft, autoCommitEnabled, write);
-			return { task: savedTask ?? task, filePath: write.filePath };
+			savedTask = await this.finalizeCreatedTask(task, write.filePath, isDraft, mutationCommitMode.autoCommit, write);
 		} catch (error) {
 			let rollback: CreatedTaskRollbackResult;
 			try {
@@ -1729,6 +1758,9 @@ export class Core {
 			}
 			throw error;
 		}
+
+		await this.publishGuardedTaskChanges(mutationCommitMode.guardedPublish);
+		return { task: savedTask ?? task, filePath: write.filePath };
 	}
 
 	/**
@@ -1753,14 +1785,15 @@ export class Core {
 			task.status = config?.defaultStatus || FALLBACK_STATUS;
 		}
 
-		const autoCommitEnabled = await this.shouldAutoCommit(autoCommit);
+		const mutationCommitMode = await this.getTaskMutationCommitMode(autoCommit);
 		const filepath = await this.writePreparedTask(task, false);
-		await this.finalizeCreatedTask(task, filepath, false, autoCommitEnabled);
+		await this.finalizeCreatedTask(task, filepath, false, mutationCommitMode.autoCommit);
+		await this.publishGuardedTaskChanges(mutationCommitMode.guardedPublish);
 
 		return filepath;
 	}
 
-	async updateTask(task: Task, autoCommit?: boolean): Promise<string> {
+	private async persistTask(task: Task, autoCommit?: boolean): Promise<string> {
 		normalizeAssignee(task);
 
 		// Load original task to detect status changes for callbacks
@@ -1783,7 +1816,7 @@ export class Core {
 		const filePath = await this.fs.saveTask(task);
 		// Keep any in-process ContentStore in sync for immediate UI/search freshness.
 
-		if (await this.shouldAutoCommit(autoCommit)) {
+		if (autoCommit) {
 			await this.git.addAndCommitTaskFile(task.id, filePath, "update");
 		}
 
@@ -1792,6 +1825,13 @@ export class Core {
 			await this.executeStatusChangeCallback(task, oldStatus, newStatus);
 		}
 
+		return filePath;
+	}
+
+	async updateTask(task: Task, autoCommit?: boolean): Promise<string> {
+		const mutationCommitMode = await this.getTaskMutationCommitMode(autoCommit);
+		const filePath = await this.persistTask(task, mutationCommitMode.autoCommit);
+		await this.publishGuardedTaskChanges(mutationCommitMode.guardedPublish);
 		return filePath;
 	}
 
@@ -2376,6 +2416,7 @@ export class Core {
 		autoCommit?: boolean,
 		options: TaskReadOptions = {},
 	): Promise<Task> {
+		const mutationCommitMode = await this.getTaskMutationCommitMode(autoCommit);
 		const task = await this.loadTaskForMutation(taskId, options);
 		if (!task) {
 			throw new Error(`Task not found: ${taskId}`);
@@ -2384,30 +2425,35 @@ export class Core {
 		const requestedStatus = input.status?.trim().toLowerCase();
 		if (requestedStatus === "draft") {
 			// demoteTaskWithUpdates takes the task lock itself, so it must not be nested here.
-			return await this.demoteTaskWithUpdates(task, input, autoCommit, options);
+			const demoted = await this.demoteTaskWithUpdates(task, input, mutationCommitMode.autoCommit, options);
+			await this.publishGuardedTaskChanges(mutationCommitMode.guardedPublish);
+			return demoted;
 		}
 
+		let mutated = false;
 		// Fail fast when another process is mid-edit, and re-read inside the lock so the whole
 		// read-modify-write is protected. Locking only the write would still lose an update
 		// whenever one writer releases before the next acquires: the second would then apply
 		// its changes to a snapshot taken before the first wrote.
-		return await this.fs.withTaskLock(task, async () => {
+		const updated = await this.fs.withTaskLock(task, async () => {
 			const current = await this.loadTaskForMutation(taskId, options);
 			if (!current) {
 				throw new Error(`Task not found: ${taskId}`);
 			}
 
-			const { mutated } = await this.applyTaskUpdateInput(current, input, async (status) =>
+			const result = await this.applyTaskUpdateInput(current, input, async (status) =>
 				this.requireCanonicalStatus(status),
 			);
-
+			mutated = result.mutated;
 			if (!mutated) {
 				return current;
 			}
 
-			await this.updateTask(current, autoCommit);
+			await this.persistTask(current, mutationCommitMode.autoCommit);
 			return current;
 		});
+		if (mutated) await this.publishGuardedTaskChanges(mutationCommitMode.guardedPublish);
+		return updated;
 	}
 
 	async updateDraft(task: Task, autoCommit?: boolean): Promise<string> {
@@ -2662,7 +2708,7 @@ export class Core {
 		const filePaths: string[] = [];
 		const updateAll = async () => {
 			for (const task of tasks) {
-				filePaths.push(await this.updateTask(task, false));
+				filePaths.push(await this.persistTask(task, false));
 			}
 		};
 		if (this.contentStore) await this.contentStore.batchTaskUpdates(updateAll);
@@ -2670,15 +2716,21 @@ export class Core {
 		return filePaths;
 	}
 
-	async updateTasksBulk(tasks: Task[], commitMessage?: string, autoCommit?: boolean): Promise<void> {
+	async updateTasksBulk(
+		tasks: Task[],
+		commitMessage?: string,
+		autoCommit?: boolean,
+		preparedGuardedPublish = false,
+	): Promise<void> {
+		const mutationCommitMode = preparedGuardedPublish
+			? { autoCommit: true, guardedPublish: true }
+			: await this.getTaskMutationCommitMode(autoCommit);
 		const filePaths = await this.fs.withTaskLocks(tasks, async () => await this.writeTasksBulk(tasks));
 
-		// Commit all changes at once if auto-commit is enabled
-		if (await this.shouldAutoCommit(autoCommit)) {
-			if (filePaths.length > 0) {
-				await this.git.addFiles(filePaths);
-				await this.git.commitFiles(commitMessage || `Update ${tasks.length} tasks`, filePaths);
-			}
+		if (mutationCommitMode.autoCommit && filePaths.length > 0) {
+			await this.git.addFiles(filePaths);
+			await this.git.commitFiles(commitMessage || `Update ${tasks.length} tasks`, filePaths);
+			await this.publishGuardedTaskChanges(mutationCommitMode.guardedPublish);
 		}
 	}
 
@@ -2710,6 +2762,7 @@ export class Core {
 			}
 			seen.add(id);
 		}
+		const mutationCommitMode = await this.getTaskMutationCommitMode(params.autoCommit);
 
 		const store = await this.getContentStore();
 		await store.refreshTasks();
@@ -2797,7 +2850,8 @@ export class Core {
 			await this.updateTasksBulk(
 				changedTasks,
 				params.commitMessage ?? `Reorder tasks in ${targetStatus}`,
-				params.autoCommit,
+				mutationCommitMode.autoCommit,
+				mutationCommitMode.guardedPublish,
 			);
 		}
 
@@ -2806,6 +2860,7 @@ export class Core {
 	}
 
 	async archiveTask(taskId: string, autoCommit?: boolean, options: TaskReadOptions = {}): Promise<boolean> {
+		const mutationCommitMode = await this.getTaskMutationCommitMode(autoCommit);
 		const taskToArchive = await this.loadTaskForMutation(taskId, options);
 		if (!taskToArchive) {
 			return false;
@@ -2824,7 +2879,7 @@ export class Core {
 		const activeTasks = (await this.fs.listTasks()).filter((task) => !taskIdsEqual(task.id, normalizedTaskId));
 		const sanitizedTasks = this.sanitizeArchivedTaskLinks(activeTasks, normalizedTaskId);
 
-		return await this.fs.withTaskLocks([taskToArchive, ...sanitizedTasks], async () => {
+		const archived = await this.fs.withTaskLocks([taskToArchive, ...sanitizedTasks], async () => {
 			try {
 				await moveFile(fromPath, toPath);
 			} catch {
@@ -2834,7 +2889,7 @@ export class Core {
 
 			const sanitizedPaths = sanitizedTasks.length > 0 ? await this.writeTasksBulk(sanitizedTasks) : [];
 
-			if (await this.shouldAutoCommit(autoCommit)) {
+			if (mutationCommitMode.autoCommit) {
 				// Stage the file move for proper Git tracking
 				const repoRoot = await this.git.stageFileMove(fromPath, toPath);
 				const commitPaths = [fromPath, toPath, ...sanitizedPaths];
@@ -2846,6 +2901,8 @@ export class Core {
 
 			return true;
 		});
+		if (archived) await this.publishGuardedTaskChanges(mutationCommitMode.guardedPublish);
+		return archived;
 	}
 
 	async archiveMilestone(
@@ -2926,6 +2983,7 @@ export class Core {
 	}
 
 	async completeTask(taskId: string, autoCommit?: boolean, options: TaskReadOptions = {}): Promise<boolean> {
+		const mutationCommitMode = await this.getTaskMutationCommitMode(autoCommit);
 		const task = await this.loadTaskForMutation(taskId, options);
 		if (!task) return false;
 		// Get paths before moving the file
@@ -2945,12 +3003,13 @@ export class Core {
 		}
 		this.contentStore?.transitionTask(task.id, { ...task, filePath: toPath, source: "completed" });
 
-		if (await this.shouldAutoCommit(autoCommit)) {
+		if (mutationCommitMode.autoCommit) {
 			// Stage the file move for proper Git tracking
 			const repoRoot = await this.git.stageFileMove(fromPath, toPath);
 			await this.git.commitFiles(`backlog: Complete task ${task.id}`, [fromPath, toPath], repoRoot);
 		}
 
+		await this.publishGuardedTaskChanges(mutationCommitMode.guardedPublish);
 		return true;
 	}
 
@@ -2989,8 +3048,8 @@ export class Core {
 
 		return moved !== null;
 	}
-
 	async promoteDraft(draftId: string, autoCommit?: boolean): Promise<boolean> {
+		const mutationCommitMode = await this.getTaskMutationCommitMode(autoCommit);
 		// Whole-file operation: filename binding decides which file is promoted, so resolution
 		// goes through the file resolver and frontmatter equivalence is not required.
 		const sourcePath = await this.fs.resolveDraftFilePath(draftId);
@@ -3001,10 +3060,9 @@ export class Core {
 		// Hold the draft lock across the read-unlink span so a concurrent edit cannot be omitted
 		// from the promoted task or leave both records on disk. Draft lock first, create lock
 		// second: nothing acquires them in the opposite order, so this cannot deadlock.
-		return await this.fs.withDraftLock({ filePath: sourcePath, canonicalId }, async () => {
-			let moved: { previousPath: string; savedPath: string } | null = null;
+		const moved = await this.fs.withDraftLock({ filePath: sourcePath, canonicalId }, async () => {
 			try {
-				moved = await this.withCreateLock(async () => {
+				return await this.withCreateLock(async () => {
 					const draft = await this.fs.loadDraftFromFile(sourcePath);
 					if (!draft) return null;
 
@@ -3039,22 +3097,23 @@ export class Core {
 				if (isCreateLockError(error) || isConfigValueError(error)) {
 					throw error;
 				}
-				return false;
+				return null;
 			}
-
-			if (moved && (await this.shouldAutoCommit(autoCommit))) {
-				await this.commitWrittenFile(
-					`backlog: Promote draft ${normalizeId(draftId, "draft")}`,
-					[moved.previousPath],
-					moved.savedPath,
-				);
-			}
-
-			return moved !== null;
 		});
-	}
 
+		if (!moved) return false;
+		if (mutationCommitMode.autoCommit) {
+			await this.commitWrittenFile(
+				`backlog: Promote draft ${normalizeId(draftId, "draft")}`,
+				[moved.previousPath],
+				moved.savedPath,
+			);
+		}
+		await this.publishGuardedTaskChanges(mutationCommitMode.guardedPublish);
+		return true;
+	}
 	async demoteTask(taskId: string, autoCommit?: boolean, options: TaskReadOptions = {}): Promise<boolean> {
+		const mutationCommitMode = await this.getTaskMutationCommitMode(autoCommit);
 		const task = await this.loadTaskForMutation(taskId, options);
 		if (!task) return false;
 		// Direct demotion is a read-modify-write too. Hold the task lock across the
@@ -3092,7 +3151,7 @@ export class Core {
 
 		if (success && moved) {
 			try {
-				if (await this.shouldAutoCommit(autoCommit)) {
+				if (mutationCommitMode.autoCommit) {
 					await this.commitWrittenFile(`backlog: Demote task ${task.id}`, [moved.previousPath], moved.savedPath);
 				}
 			} catch (error) {
@@ -3100,6 +3159,7 @@ export class Core {
 				(failure as Error & { demotionState?: string }).demotionState = "moved";
 				throw failure;
 			}
+			await this.publishGuardedTaskChanges(mutationCommitMode.guardedPublish);
 		}
 
 		return success;

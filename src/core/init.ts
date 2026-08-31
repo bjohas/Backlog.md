@@ -62,6 +62,7 @@ export interface InitializeProjectOptions {
 		activeBranchDays?: number;
 		bypassGitHooks?: boolean;
 		autoCommit?: boolean;
+		guardedTaskPublish?: boolean;
 		zeroPaddedIds?: number;
 		defaultEditor?: string;
 		definitionOfDone?: string[];
@@ -124,6 +125,7 @@ export async function initializeProject(
 				remoteOperations: false,
 				bypassGitHooks: false,
 				autoCommit: false,
+				guardedTaskPublish: false,
 			}
 		: advancedConfig;
 	const hasDefaultEditorOverride = Object.hasOwn(normalizedAdvancedConfig, "defaultEditor");
@@ -142,6 +144,8 @@ export async function initializeProject(
 		maxColumnWidth: 20,
 		filesystemOnly: effectiveFilesystemOnly || d.filesystemOnly,
 		autoCommit: normalizedAdvancedConfig.autoCommit ?? existingConfig?.autoCommit ?? d.autoCommit,
+		guardedTaskPublish:
+			normalizedAdvancedConfig.guardedTaskPublish ?? existingConfig?.guardedTaskPublish ?? d.guardedTaskPublish,
 		remoteOperations:
 			normalizedAdvancedConfig.remoteOperations ?? existingConfig?.remoteOperations ?? d.remoteOperations,
 		bypassGitHooks: normalizedAdvancedConfig.bypassGitHooks ?? existingConfig?.bypassGitHooks ?? d.bypassGitHooks,
@@ -163,6 +167,8 @@ export async function initializeProject(
 		projectName,
 		filesystemOnly: effectiveFilesystemOnly || d.filesystemOnly,
 		autoCommit: normalizedAdvancedConfig.autoCommit ?? existingConfig?.autoCommit ?? d.autoCommit,
+		guardedTaskPublish:
+			normalizedAdvancedConfig.guardedTaskPublish ?? existingConfig?.guardedTaskPublish ?? d.guardedTaskPublish,
 		remoteOperations:
 			normalizedAdvancedConfig.remoteOperations ?? existingConfig?.remoteOperations ?? d.remoteOperations,
 		bypassGitHooks: normalizedAdvancedConfig.bypassGitHooks ?? existingConfig?.bypassGitHooks ?? d.bypassGitHooks,

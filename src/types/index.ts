@@ -318,6 +318,8 @@ export interface BacklogConfig {
 	definitionOfDone?: string[];
 	defaultStatus?: string;
 	dateFormat: string;
+	/** Display terminal-board task due dates as signed UTC calendar-day offsets such as `(3)`. */
+	relativeDueDates?: boolean;
 	maxColumnWidth?: number;
 	/** Base URL that relative documentation paths are opened against, e.g. an external editor. */
 	documentBaseUrl?: string;
@@ -338,6 +340,11 @@ export interface BacklogConfig {
 	hideEmptyColumns?: boolean;
 	remoteOperations?: boolean;
 	autoCommit?: boolean;
+	/**
+	 * Before publishing a task mutation, require a clean checkout synchronized
+	 * with its upstream; then commit and push the task files.
+	 */
+	guardedTaskPublish?: boolean;
 	/** Disable all Git integration for filesystem-only projects. */
 	filesystemOnly?: boolean;
 	zeroPaddedIds?: number;

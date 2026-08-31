@@ -2114,6 +2114,9 @@ ${description || `Milestone: ${title}`}`,
 				case "date_format":
 					config.dateFormat = value.replace(/['"]/g, "");
 					break;
+				case "relative_due_dates":
+					config.relativeDueDates = value.toLowerCase() === "true";
+					break;
 				case "max_column_width":
 					config.maxColumnWidth = Number.parseInt(value, 10);
 					break;
@@ -2140,6 +2143,9 @@ ${description || `Milestone: ${title}`}`,
 					break;
 				case "auto_commit":
 					config.autoCommit = value.toLowerCase() === "true";
+					break;
+				case "guarded_task_publish":
+					config.guardedTaskPublish = value.toLowerCase() === "true";
 					break;
 				case "filesystem_only":
 				case "filesystemOnly":
@@ -2189,6 +2195,8 @@ ${description || `Milestone: ${title}`}`,
 			defaultEditor: config.defaultEditor,
 			autoOpenBrowser: config.autoOpenBrowser,
 			hideEmptyColumns: config.hideEmptyColumns,
+			relativeDueDates: config.relativeDueDates,
+			guardedTaskPublish: config.guardedTaskPublish,
 			defaultPort: config.defaultPort,
 			remoteOperations: config.remoteOperations,
 			autoCommit: config.autoCommit,
@@ -2222,6 +2230,7 @@ ${description || `Milestone: ${title}`}`,
 				? [`definition_of_done: [${normalizedDefinitionOfDone.map((item) => JSON.stringify(item)).join(", ")}]`]
 				: []),
 			`date_format: ${config.dateFormat}`,
+			...(typeof config.relativeDueDates === "boolean" ? [`relative_due_dates: ${config.relativeDueDates}`] : []),
 			...(config.maxColumnWidth ? [`max_column_width: ${config.maxColumnWidth}`] : []),
 			...(typeof config.taskListPaneWidth === "number" ? [`task_list_pane_width: ${config.taskListPaneWidth}`] : []),
 			...(config.documentBaseUrl ? [`document_base_url: "${config.documentBaseUrl}"`] : []),
@@ -2231,6 +2240,7 @@ ${description || `Milestone: ${title}`}`,
 			...(config.defaultPort ? [`default_port: ${config.defaultPort}`] : []),
 			...(typeof config.remoteOperations === "boolean" ? [`remote_operations: ${config.remoteOperations}`] : []),
 			...(typeof config.autoCommit === "boolean" ? [`auto_commit: ${config.autoCommit}`] : []),
+			...(typeof config.guardedTaskPublish === "boolean" ? [`guarded_task_publish: ${config.guardedTaskPublish}`] : []),
 			...(typeof config.filesystemOnly === "boolean" ? [`filesystem_only: ${config.filesystemOnly}`] : []),
 			...(typeof config.zeroPaddedIds === "number" ? [`zero_padded_ids: ${config.zeroPaddedIds}`] : []),
 			...(typeof config.bypassGitHooks === "boolean" ? [`bypass_git_hooks: ${config.bypassGitHooks}`] : []),
