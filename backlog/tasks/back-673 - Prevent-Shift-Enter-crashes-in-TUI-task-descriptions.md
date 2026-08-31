@@ -1,10 +1,10 @@
 ---
 id: BACK-673
 title: Prevent Shift-Enter crashes in TUI task descriptions
-status: In Progress
+status: To Do
 assignee: []
 created_date: '2026-08-31 15:44'
-updated_date: '2026-08-31 15:50'
+updated_date: '2026-08-31 15:51'
 labels: []
 dependencies: []
 priority: high
