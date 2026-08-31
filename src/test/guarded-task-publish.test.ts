@@ -63,6 +63,26 @@ describe("guarded task publishing", () => {
 		peer.disposeContentStore();
 	});
 
+	it("rejects a raced push while retaining the local task commit", async () => {
+		await $`git clone ${remoteDir} ${peerDir}`.quiet();
+		const publish = core.gitOps.publishGuardedTaskChanges.bind(core.gitOps);
+		core.gitOps.publishGuardedTaskChanges = async () => {
+			await Bun.write(join(peerDir, "raced-remote-change.txt"), "raced\n");
+			await $`git add raced-remote-change.txt`.cwd(peerDir).quiet();
+			await $`git commit -m "peer: race publication"`.cwd(peerDir).quiet();
+			await $`git push`.cwd(peerDir).quiet();
+			await publish();
+		};
+
+		await expect(core.createTaskFromInput({ title: "Retain this task locally" })).rejects.toThrow(
+			"could not push main to origin/main",
+		);
+
+		expect((await core.filesystem.listTasks()).map((task) => task.title)).toEqual(["Retain this task locally"]);
+		const localOnlyCommits = await $`git rev-list --count origin/main..HEAD`.cwd(localDir).text();
+		expect(localOnlyCommits.trim()).toBe("1");
+	});
+
 	it("refuses a task mutation when the checkout has local modifications", async () => {
 		await Bun.write(join(localDir, "uncommitted-source.ts"), "export const pending = true;\n");
 
