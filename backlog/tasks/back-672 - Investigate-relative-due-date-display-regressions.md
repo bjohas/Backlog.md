@@ -4,6 +4,7 @@ title: Investigate relative due-date display regressions
 status: To Do
 assignee: []
 created_date: '2026-08-31 15:44'
+updated_date: '2026-08-31 20:56'
 labels: []
 dependencies: []
 priority: high
@@ -40,3 +41,13 @@ Full-suite-only React `window is not defined` and symlink-test `git` ENOENT fail
 - [ ] #2 bun run check . passes when formatting/linting touched
 - [ ] #3 bun test (or scoped test) passes
 <!-- DOD:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+## Correction: due-date preference
+
+`BacklogConfig` already defines the optional `relativeDueDates` preference, and file-system config parsing/persistence maps it to `relative_due_dates`. The present project configuration has no `relative_due_dates` entry.
+
+The current unstaged callers do not consult this preference: TUI board cards and task-detail metadata pass `relativeDays: true` directly, and the web relative-date helper does the same. Relative due-date rendering is therefore intended to be configurable, but the current implementation forces it and bypasses the established absolute-date/configured-format contract.
+<!-- SECTION:NOTES:END -->
