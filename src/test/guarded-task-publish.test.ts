@@ -27,7 +27,9 @@ async function initializeGuardedProject(): Promise<void> {
 	if (!config) throw new Error("Expected Backlog config");
 	config.autoCommit = false;
 	config.guardedTaskPublish = true;
+	config.logGitActions = true;
 	await core.filesystem.saveConfig(config);
+	core.gitOps.setConfig(config);
 	await $`git add backlog/config.yml`.cwd(localDir).quiet();
 	await $`git commit -m "test: enable guarded task publishing"`.cwd(localDir).quiet();
 	await $`git push`.cwd(localDir).quiet();
@@ -81,6 +83,11 @@ describe("guarded task publishing", () => {
 		expect((await core.filesystem.listTasks()).map((task) => task.title)).toEqual(["Retain this task locally"]);
 		const localOnlyCommits = await $`git rev-list --count origin/main..HEAD`.cwd(localDir).text();
 		expect(localOnlyCommits.trim()).toBe("1");
+		const actions = (await Bun.file(join(localDir, ".git", "backlog-git-actions.jsonl")).text())
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line));
+		expect(actions.some((action) => action.args[0] === "push" && action.exitCode !== 0)).toBe(true);
 	});
 
 	it("refuses a task mutation when the checkout has local modifications", async () => {

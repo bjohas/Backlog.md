@@ -45,6 +45,7 @@ describe("Config commands", () => {
 			{ bypassGitHooks: false },
 			{ autoCommit: false },
 			{ guardedTaskPublish: false },
+			{ logGitActions: false },
 			{ enableZeroPadding: false },
 			{ editor: "" },
 			{ definitionOfDoneAction: "done" },
@@ -64,6 +65,7 @@ describe("Config commands", () => {
 		expect(mergedConfig.bypassGitHooks).toBe(false);
 		expect(mergedConfig.autoCommit).toBe(false);
 		expect(mergedConfig.guardedTaskPublish).toBe(false);
+		expect(mergedConfig.logGitActions).toBe(false);
 		expect(mergedConfig.zeroPaddedIds).toBeUndefined();
 		expect(mergedConfig.defaultEditor).toBeUndefined();
 		expect(mergedConfig.definitionOfDone).toEqual([]);
@@ -84,6 +86,7 @@ describe("Config commands", () => {
 			{ activeBranchDays: 14 },
 			{ bypassGitHooks: true },
 			{ autoCommit: true },
+			{ logGitActions: false },
 			{ enableZeroPadding: true },
 			{ paddingWidth: 4 },
 			{ editor: "backlog-test-editor" },
@@ -108,6 +111,7 @@ describe("Config commands", () => {
 		expect(mergedConfig.bypassGitHooks).toBe(true);
 		expect(mergedConfig.autoCommit).toBe(true);
 		expect(mergedConfig.guardedTaskPublish).toBe(false);
+		expect(mergedConfig.logGitActions).toBe(false);
 		expect(mergedConfig.zeroPaddedIds).toBe(4);
 		expect(mergedConfig.defaultEditor).toBe("backlog-test-editor");
 		expect(mergedConfig.definitionOfDone).toEqual(["Ship release notes"]);
@@ -123,6 +127,7 @@ describe("Config commands", () => {
 		expect(reloadedConfig?.bypassGitHooks).toBe(true);
 		expect(reloadedConfig?.autoCommit).toBe(true);
 		expect(reloadedConfig?.guardedTaskPublish).toBe(false);
+		expect(reloadedConfig?.logGitActions).toBe(false);
 	});
 
 	it("configureAdvancedSettings supports add/remove/reorder/clear actions for Definition of Done defaults", async () => {
@@ -134,6 +139,7 @@ describe("Config commands", () => {
 			{ bypassGitHooks: false },
 			{ autoCommit: false },
 			{ guardedTaskPublish: false },
+			{ logGitActions: false },
 			{ enableZeroPadding: false },
 			{ editor: "" },
 			{ definitionOfDoneAction: "add" },
@@ -202,6 +208,24 @@ describe("Config commands", () => {
 
 		const listOutput = await $`bun ${CLI_PATH} config list`.cwd(TEST_DIR).text();
 		expect(listOutput).toContain("guardedTaskPublish: true");
+	});
+
+	it("round-trips logGitActions through config get/set/list", async () => {
+		const defaultGet = await $`bun ${CLI_PATH} config get logGitActions`.cwd(TEST_DIR).text();
+		expect(defaultGet.trim()).toBe("false");
+
+		const config = await core.filesystem.loadConfig();
+		if (!config) throw new Error("Expected config");
+		config.filesystemOnly = false;
+		await core.filesystem.saveConfig(config);
+
+		await $`bun ${CLI_PATH} config set logGitActions true`.cwd(TEST_DIR).quiet();
+
+		const afterSet = await $`bun ${CLI_PATH} config get logGitActions`.cwd(TEST_DIR).text();
+		expect(afterSet.trim()).toBe("true");
+
+		const listOutput = await $`bun ${CLI_PATH} config list`.cwd(TEST_DIR).text();
+		expect(listOutput).toContain("logGitActions: true");
 	});
 
 	it("round-trips taskListPaneWidth through config get/set/list", async () => {

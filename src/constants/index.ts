@@ -71,6 +71,7 @@ export const DEFAULT_INIT_CONFIG = {
 	bypassGitHooks: false,
 	autoCommit: false,
 	guardedTaskPublish: false,
+	logGitActions: false,
 	filesystemOnly: false,
 	zeroPaddedIds: undefined as number | undefined,
 	defaultEditor: undefined as string | undefined,

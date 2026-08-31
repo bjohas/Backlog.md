@@ -2152,6 +2152,9 @@ ${description || `Milestone: ${title}`}`,
 				case "guarded_task_publish":
 					config.guardedTaskPublish = value.toLowerCase() === "true";
 					break;
+				case "log_git_actions":
+					config.logGitActions = value.toLowerCase() === "true";
+					break;
 				case "filesystem_only":
 				case "filesystemOnly":
 					config.filesystemOnly = value.toLowerCase() === "true";
@@ -2202,6 +2205,7 @@ ${description || `Milestone: ${title}`}`,
 			hideEmptyColumns: config.hideEmptyColumns,
 			relativeDueDates: config.relativeDueDates,
 			guardedTaskPublish: config.guardedTaskPublish,
+			logGitActions: config.logGitActions,
 			defaultPort: config.defaultPort,
 			remoteOperations: config.remoteOperations,
 			autoCommit: config.autoCommit,
@@ -2246,6 +2250,7 @@ ${description || `Milestone: ${title}`}`,
 			...(typeof config.remoteOperations === "boolean" ? [`remote_operations: ${config.remoteOperations}`] : []),
 			...(typeof config.autoCommit === "boolean" ? [`auto_commit: ${config.autoCommit}`] : []),
 			...(typeof config.guardedTaskPublish === "boolean" ? [`guarded_task_publish: ${config.guardedTaskPublish}`] : []),
+			...(typeof config.logGitActions === "boolean" ? [`log_git_actions: ${config.logGitActions}`] : []),
 			...(typeof config.filesystemOnly === "boolean" ? [`filesystem_only: ${config.filesystemOnly}`] : []),
 			...(typeof config.zeroPaddedIds === "number" ? [`zero_padded_ids: ${config.zeroPaddedIds}`] : []),
 			...(typeof config.bypassGitHooks === "boolean" ? [`bypass_git_hooks: ${config.bypassGitHooks}`] : []),

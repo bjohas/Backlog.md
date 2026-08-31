@@ -212,6 +212,7 @@ export async function runAdvancedConfigWizard({
 	let bypassGitHooks = config?.bypassGitHooks ?? false;
 	let autoCommit = config?.autoCommit ?? false;
 	let guardedTaskPublish = config?.guardedTaskPublish ?? false;
+	let logGitActions = config?.logGitActions ?? false;
 	let zeroPaddedIds = config?.zeroPaddedIds;
 	let defaultEditor: string | undefined =
 		config?.defaultEditor ?? process.env.EDITOR ?? process.env.VISUAL ?? resolveEditor(null);
@@ -316,6 +317,18 @@ export async function runAdvancedConfigWizard({
 	} else {
 		guardedTaskPublish = false;
 	}
+
+	const gitActionLogPrompt = await promptImpl(
+		{
+			type: "confirm",
+			name: "logGitActions",
+			message: "Log Backlog.md Git actions locally?",
+			hint: "Writes reviewable JSONL records under this repository's .git directory",
+			initial: logGitActions,
+		},
+		{ onCancel },
+	);
+	logGitActions = Boolean(gitActionLogPrompt.logGitActions ?? logGitActions);
 
 	while (true) {
 		const zeroPaddingPrompt = await promptImpl(
@@ -656,6 +669,7 @@ export async function runAdvancedConfigWizard({
 			bypassGitHooks,
 			autoCommit,
 			guardedTaskPublish,
+			logGitActions,
 			zeroPaddedIds,
 			defaultEditor,
 			definitionOfDone,

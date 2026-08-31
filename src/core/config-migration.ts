@@ -17,6 +17,7 @@ export function migrateConfig(config: Partial<BacklogConfig>): BacklogConfig {
 		remoteOperations: true,
 		autoCommit: false,
 		guardedTaskPublish: false,
+		logGitActions: false,
 		bypassGitHooks: false,
 		checkActiveBranches: true,
 		activeBranchDays: 30,
@@ -52,6 +53,7 @@ export function needsMigration(config: Partial<BacklogConfig>): boolean {
 		{ field: "remoteOperations", hasDefault: true },
 		{ field: "autoCommit", hasDefault: true },
 		{ field: "guardedTaskPublish", hasDefault: true },
+		{ field: "logGitActions", hasDefault: true },
 	];
 
 	return expectedFieldsWithDefaults.some(({ field }) => {

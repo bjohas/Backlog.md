@@ -345,6 +345,8 @@ export interface BacklogConfig {
 	 * with its upstream; then commit and push the task files.
 	 */
 	guardedTaskPublish?: boolean;
+	/** Write local JSONL records for every Backlog.md-initiated Git command. */
+	logGitActions?: boolean;
 	/** Disable all Git integration for filesystem-only projects. */
 	filesystemOnly?: boolean;
 	zeroPaddedIds?: number;

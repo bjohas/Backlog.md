@@ -134,6 +134,7 @@ const CONFIG_GET_KEYS = [
 	"remoteOperations",
 	"autoCommit",
 	"guardedTaskPublish",
+	"logGitActions",
 	"filesystemOnly",
 	"bypassGitHooks",
 	"zeroPaddedIds",
@@ -155,6 +156,7 @@ const CONFIG_SET_KEYS = [
 	"remoteOperations",
 	"autoCommit",
 	"guardedTaskPublish",
+	"logGitActions",
 	"filesystemOnly",
 	"bypassGitHooks",
 	"zeroPaddedIds",
@@ -4669,7 +4671,7 @@ agentsCmd
 
 // Config command group
 const CONFIG_AVAILABLE_KEYS =
-	"Available keys: defaultEditor, projectName, defaultAssignee, defaultStatus, statuses, labels, priorities, types, milestones, definitionOfDone, dateFormat, maxColumnWidth, taskListPaneWidth, documentBaseUrl, defaultPort, autoOpenBrowser, hideEmptyColumns, remoteOperations, autoCommit, guardedTaskPublish, filesystemOnly, bypassGitHooks, zeroPaddedIds, checkActiveBranches, activeBranchDays";
+	"Available keys: defaultEditor, projectName, defaultAssignee, defaultStatus, statuses, labels, priorities, types, milestones, definitionOfDone, dateFormat, maxColumnWidth, taskListPaneWidth, documentBaseUrl, defaultPort, autoOpenBrowser, hideEmptyColumns, remoteOperations, autoCommit, guardedTaskPublish, logGitActions, filesystemOnly, bypassGitHooks, zeroPaddedIds, checkActiveBranches, activeBranchDays";
 
 const configCmd = addHelpSchema(program.command("config"), {
 	reads: "Project Backlog.md configuration",
@@ -4720,6 +4722,7 @@ const configCmd = addHelpSchema(program.command("config"), {
 			console.log(`  Bypass git hooks: ${mergedConfig.bypassGitHooks ?? false}`);
 			console.log(`  Auto commit: ${mergedConfig.autoCommit ?? false}`);
 			console.log(`  Guarded task publish: ${mergedConfig.guardedTaskPublish ?? false}`);
+			console.log(`  Log Git actions: ${mergedConfig.logGitActions ?? false}`);
 			console.log(`  Definition of Done defaults: ${(mergedConfig.definitionOfDone ?? []).join(" | ") || "(none)"}`);
 			if (completionResult) {
 				console.log(`  Shell completions: installed to ${completionResult.installPath}`);
@@ -4852,6 +4855,9 @@ addHelpSchema(configCmd.command("get <key>"), {
 					break;
 				case "guardedTaskPublish":
 					console.log(config.guardedTaskPublish?.toString() || "");
+					break;
+				case "logGitActions":
+					console.log(config.logGitActions?.toString() || "false");
 					break;
 				case "filesystemOnly":
 					console.log(config.filesystemOnly?.toString() || "false");
@@ -5039,6 +5045,22 @@ addHelpSchema(configCmd.command("set <key> <value>"), {
 					}
 					break;
 				}
+				case "logGitActions": {
+					const boolValue = value.toLowerCase();
+					if (boolValue === "true" || boolValue === "1" || boolValue === "yes") {
+						if (config.filesystemOnly) {
+							console.error("logGitActions requires a Git-backed project");
+							process.exit(1);
+						}
+						config.logGitActions = true;
+					} else if (boolValue === "false" || boolValue === "0" || boolValue === "no") {
+						config.logGitActions = false;
+					} else {
+						console.error("logGitActions must be true or false");
+						process.exit(1);
+					}
+					break;
+				}
 				case "filesystemOnly": {
 					const boolValue = value.toLowerCase();
 					if (boolValue === "true" || boolValue === "1" || boolValue === "yes") {
@@ -5047,6 +5069,7 @@ addHelpSchema(configCmd.command("set <key> <value>"), {
 						config.remoteOperations = false;
 						config.autoCommit = false;
 						config.guardedTaskPublish = false;
+						config.logGitActions = false;
 						config.bypassGitHooks = false;
 					} else if (boolValue === "false" || boolValue === "0" || boolValue === "no") {
 						config.filesystemOnly = false;
@@ -5189,6 +5212,7 @@ addHelpSchema(configCmd.command("list"), {
 			console.log(`  remoteOperations: ${config.remoteOperations ?? "(not set)"}`);
 			console.log(`  autoCommit: ${config.autoCommit ?? "(not set)"}`);
 			console.log(`  guardedTaskPublish: ${config.guardedTaskPublish ?? "false"}`);
+			console.log(`  logGitActions: ${config.logGitActions ?? "false"}`);
 			console.log(`  filesystemOnly: ${config.filesystemOnly ?? "false"}`);
 			console.log(`  bypassGitHooks: ${config.bypassGitHooks ?? "(not set)"}`);
 			console.log(`  zeroPaddedIds: ${config.zeroPaddedIds ?? "(disabled)"}`);

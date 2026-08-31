@@ -1,4 +1,4 @@
-import { mkdtemp, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { $ } from "bun";
@@ -59,6 +59,7 @@ export class GitOperations {
 	private readonly repositories = new Set<string>();
 	private readonly repositoryChecks = new Map<string, Promise<boolean>>();
 	private readonly fetches = new Map<string, Promise<void>>();
+	private readonly gitActionLogPaths = new Map<string, Promise<string | null>>();
 
 	constructor(projectRoot: string, config: BacklogConfig | null = null, configLoader?: GitConfigLoader) {
 		this.projectRoot = projectRoot;
@@ -112,7 +113,12 @@ export class GitOperations {
 	}
 
 	private async detectRepository(cwd: string): Promise<boolean> {
-		return await isGitRepository(cwd);
+		try {
+			await this.execGit(["rev-parse", "--git-dir"], { cwd, readOnly: true });
+			return true;
+		} catch {
+			return false;
+		}
 	}
 
 	async addFile(filePath: string): Promise<void> {
@@ -1198,6 +1204,62 @@ export class GitOperations {
 		}
 	}
 
+	private async getGitActionLogPath(cwd: string): Promise<string | null> {
+		const key = resolve(cwd);
+		let logPath = this.gitActionLogPaths.get(key);
+		if (!logPath) {
+			logPath = this.resolveGitActionLogPath(cwd);
+			this.gitActionLogPaths.set(key, logPath);
+		}
+		return await logPath;
+	}
+
+	private async resolveGitActionLogPath(cwd: string): Promise<string | null> {
+		try {
+			const subprocess = Bun.spawn(["git", "rev-parse", "--git-path", "backlog-git-actions.jsonl"], {
+				cwd,
+				stdin: "ignore",
+				stdout: "pipe",
+				stderr: "ignore",
+			});
+			const [exitCode, stdout] = await Promise.all([
+				subprocess.exited,
+				subprocess.stdout ? new Response(subprocess.stdout).text() : Promise.resolve(""),
+			]);
+			const gitPath = stdout.trim();
+			return exitCode === 0 && gitPath ? resolve(cwd, gitPath) : null;
+		} catch {
+			return null;
+		}
+	}
+
+	private async logGitAction(args: string[], cwd: string, exitCode: number | null, durationMs: number): Promise<void> {
+		if (this.config?.logGitActions !== true) {
+			return;
+		}
+		try {
+			const logPath = await this.getGitActionLogPath(cwd);
+			if (!logPath) {
+				return;
+			}
+			const redactedArgs = args.map((arg) => arg.replace(/([a-z][a-z0-9+.-]*:\/\/)[^/@\s]+@/gi, "$1***@"));
+			const relativeCwd = relative(this.projectRoot, cwd) || ".";
+			await mkdir(dirname(logPath), { recursive: true });
+			await appendFile(
+				logPath,
+				`${JSON.stringify({
+					timestamp: new Date().toISOString(),
+					cwd: relativeCwd,
+					args: redactedArgs,
+					exitCode,
+					durationMs,
+				})}\n`,
+			);
+		} catch {
+			// Auditing is optional; a local logging failure must not change Git command behavior.
+		}
+	}
+
 	private async execGit(
 		args: string[],
 		options?: {
@@ -1209,6 +1271,9 @@ export class GitOperations {
 			timeoutMs?: number;
 		},
 	): Promise<{ stdout: string; stderr: string }> {
+		await this.loadConfigIfNeeded();
+		const cwd = options?.cwd ?? this.projectRoot;
+		const startedAt = Date.now();
 		// Use Bun.spawn so we can explicitly control stdio behaviour on Windows. When running
 		// under the MCP stdio transport, delegating to git with inherited stdin can deadlock.
 		const env = {
@@ -1219,7 +1284,7 @@ export class GitOperations {
 
 		const useProcessGroup = options?.timeoutMs !== undefined && process.platform !== "win32";
 		const subprocess = Bun.spawn(["git", ...args], {
-			cwd: options?.cwd ?? this.projectRoot,
+			cwd,
 			stdin: options?.input === undefined ? "ignore" : "pipe",
 			stdout: "pipe",
 			stderr: "pipe",
@@ -1301,11 +1366,15 @@ export class GitOperations {
 								timeout.unref();
 							}),
 						]);
+		} catch (error) {
+			await this.logGitAction(args, cwd, null, Date.now() - startedAt);
+			throw error;
 		} finally {
-			if (timeout) clearTimeout(timeout);
+			clearTimeout(timeout);
 		}
 		const [exitCode, stdout, stderr] = result;
 
+		await this.logGitAction(args, cwd, exitCode, Date.now() - startedAt);
 		if (exitCode !== 0 && !options?.acceptedExitCodes?.includes(exitCode)) {
 			throw new Error(`Git command failed (exit code ${exitCode}): git ${args.join(" ")}\n${stderr}`);
 		}

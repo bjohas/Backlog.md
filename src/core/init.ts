@@ -63,6 +63,7 @@ export interface InitializeProjectOptions {
 		bypassGitHooks?: boolean;
 		autoCommit?: boolean;
 		guardedTaskPublish?: boolean;
+		logGitActions?: boolean;
 		zeroPaddedIds?: number;
 		defaultEditor?: string;
 		definitionOfDone?: string[];
@@ -126,6 +127,7 @@ export async function initializeProject(
 				bypassGitHooks: false,
 				autoCommit: false,
 				guardedTaskPublish: false,
+				logGitActions: false,
 			}
 		: advancedConfig;
 	const hasDefaultEditorOverride = Object.hasOwn(normalizedAdvancedConfig, "defaultEditor");
@@ -146,6 +148,7 @@ export async function initializeProject(
 		autoCommit: normalizedAdvancedConfig.autoCommit ?? existingConfig?.autoCommit ?? d.autoCommit,
 		guardedTaskPublish:
 			normalizedAdvancedConfig.guardedTaskPublish ?? existingConfig?.guardedTaskPublish ?? d.guardedTaskPublish,
+		logGitActions: normalizedAdvancedConfig.logGitActions ?? existingConfig?.logGitActions ?? d.logGitActions,
 		remoteOperations:
 			normalizedAdvancedConfig.remoteOperations ?? existingConfig?.remoteOperations ?? d.remoteOperations,
 		bypassGitHooks: normalizedAdvancedConfig.bypassGitHooks ?? existingConfig?.bypassGitHooks ?? d.bypassGitHooks,
@@ -169,6 +172,7 @@ export async function initializeProject(
 		autoCommit: normalizedAdvancedConfig.autoCommit ?? existingConfig?.autoCommit ?? d.autoCommit,
 		guardedTaskPublish:
 			normalizedAdvancedConfig.guardedTaskPublish ?? existingConfig?.guardedTaskPublish ?? d.guardedTaskPublish,
+		logGitActions: normalizedAdvancedConfig.logGitActions ?? existingConfig?.logGitActions ?? d.logGitActions,
 		remoteOperations:
 			normalizedAdvancedConfig.remoteOperations ?? existingConfig?.remoteOperations ?? d.remoteOperations,
 		bypassGitHooks: normalizedAdvancedConfig.bypassGitHooks ?? existingConfig?.bypassGitHooks ?? d.bypassGitHooks,
