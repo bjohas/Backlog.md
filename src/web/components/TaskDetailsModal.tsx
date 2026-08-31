@@ -11,7 +11,10 @@ import { toggleCheckboxSpanAt } from '../utils/checkbox-spans';
 import { resolveDocumentUrl } from '../utils/document-url';
 import ChipInput from "./ChipInput";
 import DependencyInput from "./DependencyInput";
-import { formatStoredUtcDateForDisplay } from "../utils/date-display";
+import {
+	formatStoredUtcDateForDisplay,
+	formatStoredUtcDueDateForRelativeDisplay,
+} from "../utils/date-display";
 import { getPriorityOptions } from "../../utils/priority-config";
 import { getTaskTypeValues, resolveTaskTypeValue } from "../../utils/task-type-config";
 import { createReadinessGraph, formatReadinessBlockers, getTaskReadiness } from "../../utils/readiness";
@@ -39,6 +42,7 @@ interface Props {
   definitionOfDoneDefaults?: string[];
   defaultAssignee?: string[];
   dateFormat?: string;
+  relativeDueDates?: boolean;
   documentBaseUrl?: string;
 }
 
@@ -204,6 +208,7 @@ export const TaskDetailsModal: React.FC<Props> = ({
   definitionOfDoneDefaults,
   defaultAssignee,
   dateFormat,
+  relativeDueDates = false,
   documentBaseUrl,
 }) => {
   const { theme } = useTheme();
@@ -1895,7 +1900,7 @@ export const TaskDetailsModal: React.FC<Props> = ({
 	                <div><span className="font-semibold text-gray-800 dark:text-gray-100">Updated:</span> <span className="text-gray-700 dark:text-gray-200">{formatStoredUtcDateForDisplay(task.updatedDate, dateFormat)}</span></div>
 	              )}
 	              {task.dueDate && mode === "preview" && (
-	                <div><span className="font-semibold text-gray-800 dark:text-gray-100">Due (UTC):</span> <span className="text-gray-700 dark:text-gray-200">{formatStoredUtcDateForDisplay(task.dueDate, dateFormat)}</span></div>
+	                <div><span className="font-semibold text-gray-800 dark:text-gray-100">{relativeDueDates ? "Due:" : "Due (UTC):"}</span> <span className="text-gray-700 dark:text-gray-200">{relativeDueDates ? formatStoredUtcDueDateForRelativeDisplay(task.dueDate) : formatStoredUtcDateForDisplay(task.dueDate, dateFormat)}</span></div>
 	              )}
 	            </div>
 	          )}

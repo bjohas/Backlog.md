@@ -21,6 +21,7 @@ interface TaskColumnProps {
   priorityOrder?: string[];
   availableTypes?: string[];
   dateFormat?: string;
+  relativeDueDates?: boolean;
 }
 
 type CreatedDateSortDirection = 'asc' | 'desc';
@@ -67,6 +68,7 @@ const TaskColumn: React.FC<TaskColumnProps> = ({
   priorityOrder,
   availableTypes,
   dateFormat,
+  relativeDueDates,
 }) => {
   const [isDragOver, setIsDragOver] = React.useState(false);
   const [draggedTaskId, setDraggedTaskId] = React.useState<string | null>(null);
@@ -93,8 +95,8 @@ const TaskColumn: React.FC<TaskColumnProps> = ({
       setShowMenu(false);
       return;
     }
+    const currentIds = tasks.map((task) => task.id);
 
-    const currentIds = tasks.map(t => t.id);
     const hasChanged = orderedTaskIds.some((id, index) => id !== currentIds[index]);
     const leadTaskId = orderedTaskIds[0];
 
@@ -335,8 +337,9 @@ const TaskColumn: React.FC<TaskColumnProps> = ({
               }}
               status={title}
               laneId={laneId}
-              availableTypes={availableTypes}
               dateFormat={dateFormat}
+              relativeDueDates={relativeDueDates}
+              availableTypes={availableTypes}
             />
             
             {/* Drop indicator for after this task */}

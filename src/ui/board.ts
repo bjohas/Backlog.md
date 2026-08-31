@@ -20,7 +20,7 @@ import { getPriorityOptions } from "../utils/priority-config.ts";
 import { applySharedTaskFilters, createTaskSearchIndex, type LabelMatchMode } from "../utils/task-search.ts";
 import { compareTaskIds } from "../utils/task-sorting.ts";
 import { getTaskTypeValues, resolveTaskTypeValues } from "../utils/task-type-config.ts";
-import { formatUtcDateForDisplay } from "../utils/utc-date-display.ts";
+import { formatDueDateForDisplay } from "../utils/utc-date-display.ts";
 import { formatAcceptanceCriteriaProgress } from "./acceptance-criteria-progress.ts";
 import { openConfirmPopup } from "./components/confirm-popup.ts";
 import { createFilterHeader, type FilterHeader, type FilterState } from "./components/filter-header.ts";
@@ -151,13 +151,15 @@ export function formatTaskListItem(
 	isMoving = false,
 	availableWidth = Number.POSITIVE_INFINITY,
 	dateFormat?: string,
+	relativeDueDates = false,
+	now?: Date,
 ): string {
 	const assignee = task.assignee?.[0]
 		? ` {cyan-fg}${task.assignee[0].startsWith("@") ? task.assignee[0] : `@${task.assignee[0]}`}{/}`
 		: "";
 	const labels = task.labels?.length ? ` {yellow-fg}[${task.labels.join(", ")}]{/}` : "";
 	const dueDate = task.dueDate
-		? ` {gray-fg}(due ${formatUtcDateForDisplay(task.dueDate, { dateFormat, appendUtcLabel: true })}){/}`
+		? ` {gray-fg}(due ${formatDueDateForDisplay(task.dueDate, { dateFormat, relativeDays: relativeDueDates, appendUtcLabel: !relativeDueDates, now })}){/}`
 		: "";
 	const typeBadge = formatTaskTypeBadge(task.type);
 	const type = typeBadge ? ` ${typeBadge}` : "";
@@ -182,8 +184,11 @@ function buildRenderedTaskListItems(
 	movingTaskId?: string,
 	availableWidth = Number.POSITIVE_INFINITY,
 	dateFormat?: string,
+	relativeDueDates = false,
 ): { rich: string[]; plain: string[] } {
-	const rich = tasks.map((task) => formatTaskListItem(task, movingTaskId === task.id, availableWidth, dateFormat));
+	const rich = tasks.map((task) =>
+		formatTaskListItem(task, movingTaskId === task.id, availableWidth, dateFormat, relativeDueDates),
+	);
 	return {
 		rich,
 		plain: rich.map((item) => stripBlessedFgTags(item)),
@@ -309,6 +314,7 @@ export async function renderBoardTui(
 		milestoneEntities?: Milestone[];
 		startupWarning?: string;
 		dateFormat?: string;
+		relativeDueDates?: boolean;
 		hideEmptyColumns?: boolean;
 		projectName?: string;
 		createTask?: (input: TaskCreateInput) => Promise<Task>;
@@ -546,7 +552,13 @@ export async function renderBoardTui(
 		const getFormattedItems = (tasks: Task[]) => {
 			const columnCount = Math.max(1, currentColumnsData.length);
 			const availableWidth = Math.max(1, Math.floor(getTerminalWidth() / columnCount) - 4);
-			return buildRenderedTaskListItems(tasks, moveOp?.taskId, availableWidth, options?.dateFormat);
+			return buildRenderedTaskListItems(
+				tasks,
+				moveOp?.taskId,
+				availableWidth,
+				options?.dateFormat,
+				options?.relativeDueDates ?? false,
+			);
 		};
 
 		const createColumnViews = (data: ColumnData[]) => {
@@ -1339,7 +1351,13 @@ export async function renderBoardTui(
 		const openTaskPopup = async (task: Task): Promise<void> => {
 			popupOpen = true;
 
-			const popup = await createTaskPopup(screen, task, resolveMilestoneLabel, options?.dateFormat);
+			const popup = await createTaskPopup(
+				screen,
+				task,
+				resolveMilestoneLabel,
+				options?.dateFormat,
+				options?.relativeDueDates ?? false,
+			);
 			if (!popup) {
 				popupOpen = false;
 				return;

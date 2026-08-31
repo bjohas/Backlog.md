@@ -22,6 +22,7 @@ interface BoardPageProps {
 	loadError?: Error | null;
 	hideEmptyColumns?: boolean;
 	dateFormat?: string;
+	relativeDueDates?: boolean;
 	availablePriorities?: string[];
 	availableTypes?: string[];
 }
@@ -42,6 +43,7 @@ export default function BoardPage({
 	loadError,
 	hideEmptyColumns,
 	dateFormat,
+	relativeDueDates,
 	availablePriorities,
 	availableTypes,
 }: BoardPageProps) {
@@ -190,6 +192,7 @@ export default function BoardPage({
 				onFiltersChange={handleFiltersChange}
 				hideEmptyColumns={hideEmptyColumns}
 				dateFormat={dateFormat}
+				relativeDueDates={relativeDueDates}
 			/>
 		</div>
 	);

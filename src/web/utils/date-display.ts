@@ -1,4 +1,4 @@
-import { formatUtcDateForDisplay } from "../../utils/utc-date-display.ts";
+import { formatDueDateForDisplay, formatUtcDateForDisplay } from "../../utils/utc-date-display.ts";
 
 const DATE_ONLY_REGEX = /^(\d{4})-(\d{2})-(\d{2})$/;
 const DATE_TIME_REGEX = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})$/;
@@ -84,6 +84,9 @@ export function formatStoredUtcDateForCompactDisplay(
 		if (diffDays < 7) return `${diffDays}d ago`;
 	}
 
-	// Absolute fallback stays compact: format only the date portion of the stored value.
 	return formatUtcDateForDisplay(normalized.slice(0, 10), { dateFormat });
+}
+
+export function formatStoredUtcDueDateForRelativeDisplay(dateStr: string, now?: Date): string {
+	return formatDueDateForDisplay(dateStr, { relativeDays: true, now });
 }

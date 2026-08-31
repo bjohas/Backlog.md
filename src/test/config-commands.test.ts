@@ -191,6 +191,19 @@ describe("Config commands", () => {
 		expect(listOutput).toContain("hideEmptyColumns: true");
 	});
 
+	it("round-trips relativeDueDates through config get/set/list", async () => {
+		const defaultGet = await $`bun ${CLI_PATH} config get relativeDueDates`.cwd(TEST_DIR).text();
+		expect(defaultGet.trim()).toBe("false");
+
+		await $`bun ${CLI_PATH} config set relativeDueDates true`.cwd(TEST_DIR).quiet();
+
+		const afterSet = await $`bun ${CLI_PATH} config get relativeDueDates`.cwd(TEST_DIR).text();
+		expect(afterSet.trim()).toBe("true");
+
+		const listOutput = await $`bun ${CLI_PATH} config list`.cwd(TEST_DIR).text();
+		expect(listOutput).toContain("relativeDueDates: true");
+	});
+
 	it("round-trips guardedTaskPublish through config get/set/list", async () => {
 		const defaultGet = await $`bun ${CLI_PATH} config get guardedTaskPublish`.cwd(TEST_DIR).text();
 		expect(defaultGet.trim()).toBe("false");

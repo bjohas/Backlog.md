@@ -15,6 +15,7 @@ import { collectArchivedMilestoneKeys, getMilestoneLabel, milestoneKey } from ".
 import {
 	formatStoredUtcDateForCompactDisplay,
 	formatStoredUtcDateForDisplay,
+	formatStoredUtcDueDateForRelativeDisplay,
 	parseStoredUtcDate,
 } from "../utils/date-display";
 import {
@@ -40,6 +41,7 @@ interface TaskListProps {
 	archivedMilestones: Milestone[];
 	onRefreshData?: () => Promise<void>;
 	dateFormat?: string;
+	relativeDueDates?: boolean;
 	isLoading?: boolean;
 }
 
@@ -90,7 +92,7 @@ function readInitialSort(searchParams: URLSearchParams): { column: TaskSortColum
 // header label and its cell content; Title is the one flexible column (null) and absorbs
 // whatever the content area has left, so the table fits a laptop viewport instead of
 // overflowing it.
-const TASK_COLUMN_WIDTHS_REM: readonly (number | null)[] = [6, null, 6.5, 6.5, 6, 8, 6.5, 8, 6, 6];
+const TASK_COLUMN_WIDTHS_REM: readonly (number | null)[] = [5.5, null, 6, 6, 5.5, 7, 6, 7, 5.5, 5.5];
 
 // Below this the table scrolls horizontally rather than crushing the columns.
 const TASK_TITLE_MIN_WIDTH_REM = 12;
@@ -166,6 +168,7 @@ const TaskList: React.FC<TaskListProps> = ({
 	archivedMilestones,
 	onRefreshData,
 	dateFormat,
+	relativeDueDates = false,
 	isLoading = false,
 }) => {
 	const [searchParams, setSearchParams] = useSearchParams();
@@ -1171,7 +1174,10 @@ const TaskList: React.FC<TaskListProps> = ({
 												<AcceptanceCriteriaProgress task={task} cells={10} className="mt-1" />
 												{task.dueDate && (
 													<div className="mt-1 text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
-														Due (UTC): {formatStoredUtcDateForDisplay(task.dueDate, dateFormat)}
+														{relativeDueDates ? "Due:" : "Due (UTC):"}{" "}
+														{relativeDueDates
+															? formatStoredUtcDueDateForRelativeDisplay(task.dueDate)
+															: formatStoredUtcDateForDisplay(task.dueDate, dateFormat)}
 													</div>
 												)}
 											</td>

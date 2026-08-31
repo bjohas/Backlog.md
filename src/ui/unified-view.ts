@@ -513,6 +513,7 @@ export async function runUnifiedView(options: UnifiedViewOptions): Promise<void>
 					milestoneEntities,
 					startupWarning,
 					dateFormat: config?.dateFormat,
+					relativeDueDates: config?.relativeDueDates ?? false,
 					projectName: config?.projectName,
 					priorities: config?.priorities,
 					types: config?.types,

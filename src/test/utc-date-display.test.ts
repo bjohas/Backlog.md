@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { formatTaskPlainText } from "../formatters/task-plain-text.ts";
 import type { Task } from "../types/index.ts";
-import { formatUtcDateForDisplay } from "../utils/utc-date-display.ts";
+import { formatDueDateForDisplay, formatUtcDateForDisplay } from "../utils/utc-date-display.ts";
 
 describe("UTC date display", () => {
 	it("formats stored UTC task dates without applying the local timezone", () => {
@@ -60,6 +60,14 @@ describe("UTC date display", () => {
 		expect(formatUtcDateForDisplay("2026-07-04 21:54", { dateFormat: "dd/mm/yyyy", appendUtcLabel: true })).toBe(
 			"04/07/2026 21:54 (UTC)",
 		);
+	});
+
+	it("formats due dates as relative UTC durations", () => {
+		const now = new Date(Date.UTC(2026, 6, 4, 12, 0, 0));
+		expect(formatDueDateForDisplay("2026-07-06 12:00", { relativeDays: true, now })).toBe("(2d)");
+		expect(formatDueDateForDisplay("2026-07-05 17:00", { relativeDays: true, now })).toBe("(1d5h)");
+		expect(formatDueDateForDisplay("2026-07-04 17:00", { relativeDays: true, now })).toBe("(5h)");
+		expect(formatDueDateForDisplay("2026-07-02 11:00", { relativeDays: true, now })).toBe("(-2d)");
 	});
 
 	it("adds UTC labels to plain task and comment date fields", () => {

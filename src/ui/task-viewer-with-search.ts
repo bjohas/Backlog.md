@@ -32,6 +32,7 @@ import { canonicalTaskId, taskIdsEqual } from "../utils/task-id.ts";
 import { applyTaskFilters, createTaskSearchIndex, type LabelMatchMode } from "../utils/task-search.ts";
 import { attachSubtaskSummaries } from "../utils/task-subtasks.ts";
 import { getTaskTypeValues, resolveTaskTypeValues } from "../utils/task-type-config.ts";
+import { formatDueDateForDisplay } from "../utils/utc-date-display.ts";
 import { formatAcceptanceCriteriaProgress } from "./acceptance-criteria-progress.ts";
 import { formatChecklistItem } from "./checklist.ts";
 import { transformCodePaths } from "./code-path.ts";
@@ -284,6 +285,7 @@ export async function viewTaskEnhanced(
 	);
 
 	let dateFormat: string | undefined;
+	let relativeDueDates = false;
 	let projectName: string | undefined;
 	let taskListPaneWidth = DEFAULT_TASK_LIST_PANE_WIDTH;
 
@@ -296,6 +298,7 @@ export async function viewTaskEnhanced(
 		priorityOptions = getPriorityOptions(config);
 		configuredTaskTypes = getTaskTypeValues(config);
 		dateFormat = config?.dateFormat;
+		relativeDueDates = config?.relativeDueDates ?? false;
 		projectName = config?.projectName;
 		taskListPaneWidth = resolveTaskListPaneWidth(config?.taskListPaneWidth);
 		taskSearchIndex = createTaskSearchIndex(allTasks);
@@ -310,6 +313,7 @@ export async function viewTaskEnhanced(
 			priorityOptions = getPriorityOptions(config);
 			configuredTaskTypes = getTaskTypeValues(config);
 			dateFormat = config?.dateFormat;
+			relativeDueDates = config?.relativeDueDates ?? false;
 			projectName = config?.projectName;
 			taskListPaneWidth = resolveTaskListPaneWidth(config?.taskListPaneWidth);
 
@@ -1138,6 +1142,7 @@ export async function viewTaskEnhanced(
 			resolveMilestoneLabel,
 			dateFormat,
 			buildReadinessGraph(),
+			relativeDueDates,
 		);
 
 		// Calculate header height based on content and available width
@@ -1584,6 +1589,7 @@ export function generateDetailContent(
 	// against. Callers without one (the board quick-look popup) get no readiness line rather than a
 	// wrong one derived from an empty graph.
 	readinessGraph?: ReadinessGraph,
+	relativeDueDates = false,
 ): { headerContent: string[]; bodyContent: string[] } {
 	const headerContent = [
 		` ${wrapStatusColor(formatStatusWithIcon(task.status), getStatusColor(task.status))} {bold}{blue-fg}${task.id}{/blue-fg}{/bold} - ${task.title}`,
@@ -1607,7 +1613,13 @@ export function generateDetailContent(
 		metadata.push(`{bold}Updated:{/bold} ${formatDateForDisplay(task.updatedDate, { dateFormat })}`);
 	}
 	if (task.dueDate) {
-		metadata.push(`{bold}Due:{/bold} ${formatDateForDisplay(task.dueDate, { dateFormat, appendUtcLabel: true })}`);
+		metadata.push(
+			`{bold}Due:{/bold} ${formatDueDateForDisplay(task.dueDate, {
+				dateFormat,
+				relativeDays: relativeDueDates,
+				appendUtcLabel: !relativeDueDates,
+			})}`,
+		);
 	}
 	if (task.priority) {
 		const priorityDisplay = getPriorityDisplay(task.priority);
@@ -1779,6 +1791,7 @@ export async function createTaskPopup(
 	task: Task,
 	resolveMilestoneLabel?: (milestone: string) => string,
 	dateFormat?: string,
+	relativeDueDates = false,
 ): Promise<{
 	background: BoxInterface;
 	popup: BoxInterface;
@@ -1815,7 +1828,13 @@ export async function createTaskPopup(
 
 	popup.setFront?.();
 
-	const { headerContent, bodyContent } = generateDetailContent(task, resolveMilestoneLabel, dateFormat);
+	const { headerContent, bodyContent } = generateDetailContent(
+		task,
+		resolveMilestoneLabel,
+		dateFormat,
+		undefined,
+		relativeDueDates,
+	);
 
 	// Calculate header height based on content and available width
 	const popupWidth = typeof popup.width === "number" ? popup.width : 80;

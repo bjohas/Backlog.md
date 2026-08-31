@@ -126,6 +126,7 @@ const CONFIG_GET_KEYS = [
 	"milestones",
 	"definitionOfDone",
 	"dateFormat",
+	"relativeDueDates",
 	"maxColumnWidth",
 	"taskListPaneWidth",
 	"documentBaseUrl",
@@ -148,6 +149,7 @@ const CONFIG_SET_KEYS = [
 	"defaultAssignee",
 	"defaultStatus",
 	"dateFormat",
+	"relativeDueDates",
 	"maxColumnWidth",
 	"taskListPaneWidth",
 	"documentBaseUrl",
@@ -4671,7 +4673,7 @@ agentsCmd
 
 // Config command group
 const CONFIG_AVAILABLE_KEYS =
-	"Available keys: defaultEditor, projectName, defaultAssignee, defaultStatus, statuses, labels, priorities, types, milestones, definitionOfDone, dateFormat, maxColumnWidth, taskListPaneWidth, documentBaseUrl, defaultPort, autoOpenBrowser, hideEmptyColumns, remoteOperations, autoCommit, guardedTaskPublish, logGitActions, filesystemOnly, bypassGitHooks, zeroPaddedIds, checkActiveBranches, activeBranchDays";
+	"Available keys: defaultEditor, projectName, defaultAssignee, defaultStatus, statuses, labels, priorities, types, milestones, definitionOfDone, dateFormat, relativeDueDates, maxColumnWidth, taskListPaneWidth, documentBaseUrl, defaultPort, autoOpenBrowser, hideEmptyColumns, remoteOperations, autoCommit, guardedTaskPublish, logGitActions, filesystemOnly, bypassGitHooks, zeroPaddedIds, checkActiveBranches, activeBranchDays";
 
 const configCmd = addHelpSchema(program.command("config"), {
 	reads: "Project Backlog.md configuration",
@@ -4829,6 +4831,9 @@ addHelpSchema(configCmd.command("get <key>"), {
 				case "dateFormat":
 					console.log(config.dateFormat);
 					break;
+				case "relativeDueDates":
+					console.log(config.relativeDueDates?.toString() || "false");
+					break;
 				case "maxColumnWidth":
 					console.log(config.maxColumnWidth?.toString() || "");
 					break;
@@ -4940,6 +4945,18 @@ addHelpSchema(configCmd.command("set <key> <value>"), {
 				case "dateFormat":
 					config.dateFormat = value;
 					break;
+				case "relativeDueDates": {
+					const boolValue = value.toLowerCase();
+					if (boolValue === "true" || boolValue === "1" || boolValue === "yes") {
+						config.relativeDueDates = true;
+					} else if (boolValue === "false" || boolValue === "0" || boolValue === "no") {
+						config.relativeDueDates = false;
+					} else {
+						console.error("relativeDueDates must be true or false");
+						process.exit(1);
+					}
+					break;
+				}
 				case "maxColumnWidth": {
 					const width = Number.parseInt(value, 10);
 					if (Number.isNaN(width) || width <= 0) {
@@ -5203,6 +5220,7 @@ addHelpSchema(configCmd.command("list"), {
 			console.log(`  milestones: [${milestones.map((milestone) => milestone.id).join(", ")}]`);
 			console.log(`  definitionOfDone: [${(config.definitionOfDone ?? []).join(", ")}]`);
 			console.log(`  dateFormat: ${config.dateFormat}`);
+			console.log(`  relativeDueDates: ${config.relativeDueDates ?? "false"}`);
 			console.log(`  maxColumnWidth: ${config.maxColumnWidth || "(not set)"}`);
 			console.log(`  taskListPaneWidth: ${config.taskListPaneWidth || "(not set)"}`);
 			console.log(`  documentBaseUrl: ${config.documentBaseUrl || "(not set)"}`);

@@ -40,6 +40,7 @@ interface BoardProps {
   onFiltersChange?: (filters: { assignee: string; labels: string[]; priority: string; taskType: string }) => void;
   hideEmptyColumns?: boolean;
   dateFormat?: string;
+  relativeDueDates?: boolean;
 }
 
 const BOARD_FILTER_SELECT_CLASS =
@@ -74,6 +75,7 @@ const Board: React.FC<BoardProps> = ({
   onFiltersChange,
   hideEmptyColumns = false,
   dateFormat,
+  relativeDueDates = false,
 }) => {
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [dragSourceStatus, setDragSourceStatus] = useState<string | null>(null);
@@ -695,10 +697,11 @@ const Board: React.FC<BoardProps> = ({
                             targetMilestone={lane.milestone ?? null}
                             priorityOrder={availablePriorities}
                             availableTypes={typeOptions}
-                            dateFormat={dateFormat}
                             onDragStart={handleColumnDragStart}
                             onDragEnd={handleColumnDragEnd}
                             onCleanup={status === terminalStatus ? () => setShowCleanupModal(true) : undefined}
+                            dateFormat={dateFormat}
+                            relativeDueDates={relativeDueDates}
                           />
                         </div>
                       ))}
@@ -725,10 +728,11 @@ const Board: React.FC<BoardProps> = ({
                   laneId={DEFAULT_LANE_KEY}
                   priorityOrder={availablePriorities}
                   availableTypes={typeOptions}
-                  dateFormat={dateFormat}
                   onDragStart={handleColumnDragStart}
                   onDragEnd={handleColumnDragEnd}
                   onCleanup={status === terminalStatus ? () => setShowCleanupModal(true) : undefined}
+                  dateFormat={dateFormat}
+                  relativeDueDates={relativeDueDates}
                 />
               </div>
             ))}

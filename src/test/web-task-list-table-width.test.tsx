@@ -26,6 +26,7 @@ const EXPECTED_HEADERS = [
 	"Assignee",
 	"Milestone",
 	"Created",
+	"Updated",
 ];
 
 const createTask = (overrides: Partial<Task>): Task => ({
@@ -50,7 +51,7 @@ const setupDom = () => {
 	globalThis.localStorage = dom.window.localStorage as unknown as Storage;
 };
 
-const renderTaskList = (): HTMLElement => {
+const renderTaskList = (relativeDueDates = false): HTMLElement => {
 	setupDom();
 	const container = document.getElementById("root");
 	expect(container).toBeTruthy();
@@ -75,6 +76,7 @@ const renderTaskList = (): HTMLElement => {
 					archivedMilestones={[]}
 					onEditTask={() => {}}
 					onNewTask={() => {}}
+					relativeDueDates={relativeDueDates}
 				/>
 			</MemoryRouter>,
 		);
@@ -112,6 +114,14 @@ describe("TaskList table width budget", () => {
 		expect(headers).toEqual(EXPECTED_HEADERS);
 		expect(container.querySelectorAll("tbody tr td")).toHaveLength(EXPECTED_HEADERS.length);
 		expect(container.textContent).toContain("Due (UTC): 2026-08-10 14:30");
+	});
+
+	it("uses relative due dates only when configured", () => {
+		const container = renderTaskList(true);
+		const text = container.textContent ?? "";
+		expect(text).toContain("Due:");
+		expect(text).not.toContain("Due (UTC):");
+		expect(text).not.toContain("2026-08-10 14:30");
 	});
 
 	it("leaves Title as the only flexible column", () => {

@@ -85,6 +85,7 @@ const renderPage = (
 	options: {
 		onRefreshData?: () => Promise<void>;
 		dateFormat?: string;
+		relativeDueDates?: boolean;
 	} = {},
 ): HTMLElement => {
 	setupDom();
@@ -102,6 +103,7 @@ const renderPage = (
 					onEditTask={() => {}}
 					onRefreshData={options.onRefreshData}
 					dateFormat={options.dateFormat}
+					relativeDueDates={options.relativeDueDates}
 				/>
 			</MemoryRouter>,
 		);
@@ -182,6 +184,14 @@ describe("Web milestones page search", () => {
 	it("uses the configured date format for milestone due dates", () => {
 		const container = renderPage(baseTasks, { dateFormat: "dd/mm/yyyy hh:mm" });
 		expect(container.textContent).toContain("Due (UTC): 01/09/2026 12:00");
+	});
+
+	it("uses relative milestone due dates only when configured", () => {
+		const container = renderPage(baseTasks, { dateFormat: "dd/mm/yyyy hh:mm", relativeDueDates: true });
+		const text = container.textContent ?? "";
+		expect(text).toContain("Due:");
+		expect(text).not.toContain("Due (UTC):");
+		expect(text).not.toContain("01/09/2026 12:00");
 	});
 
 	it("searching one milestone still renders other milestone sections", () => {

@@ -707,6 +707,7 @@ function AppContent() {
       loadError={loadError}
       hideEmptyColumns={config?.hideEmptyColumns ?? false}
       dateFormat={config?.dateFormat}
+      relativeDueDates={config?.relativeDueDates ?? false}
       availablePriorities={config?.priorities}
       availableTypes={availableTypes}
     />
@@ -725,6 +726,7 @@ function AppContent() {
       archivedMilestones={archivedMilestones}
       onRefreshData={refreshData}
       dateFormat={config?.dateFormat}
+      relativeDueDates={config?.relativeDueDates ?? false}
       isLoading={isLoading}
     />
   );
@@ -793,6 +795,7 @@ function AppContent() {
                 onEditTask={handleEditTask}
                 onRefreshData={refreshData}
                 dateFormat={config?.dateFormat}
+                relativeDueDates={config?.relativeDueDates ?? false}
               />
             }
           />
@@ -845,6 +848,7 @@ function AppContent() {
         definitionOfDoneDefaults={config?.definitionOfDone ?? []}
         defaultAssignee={(config?.defaultAssignee?.length ?? 0) > 0 ? config?.defaultAssignee : config?.gitUserName ? [config.gitUserName] : undefined}
         dateFormat={config?.dateFormat}
+        relativeDueDates={config?.relativeDueDates ?? false}
         documentBaseUrl={config?.documentBaseUrl}
       />
 

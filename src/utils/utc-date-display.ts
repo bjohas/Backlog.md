@@ -8,6 +8,11 @@ export type UtcDateDisplayOptions = {
 	dateFormat?: string;
 };
 
+export type DueDateDisplayOptions = UtcDateDisplayOptions & {
+	relativeDays?: boolean;
+	now?: Date;
+};
+
 const dateOnlyPattern = /^\d{4}-\d{2}-\d{2}$/;
 const timezoneLessDateTimePattern = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::\d{2}(?:\.\d+)?)?$/;
 const explicitTimezoneDateTimePattern =
@@ -117,6 +122,49 @@ function applyDateFormat(dateFormat: string, canonicalMatch: RegExpMatchArray): 
 
 	const formattedTime = timePart.replace(/hh|mm/gi, (token) => (token.toLowerCase() === "hh" ? hours : minutes));
 	return `${formattedDate} ${formattedTime}`;
+}
+
+const millisecondsPerHour = 60 * 60 * 1000;
+
+/**
+ * Formats a due date either absolutely or as a signed UTC duration.
+ * Relative values omit the UTC label because they are durations, not datetimes.
+ */
+export function formatDueDateForDisplay(dateStr: string | undefined, options: DueDateDisplayOptions = {}): string {
+	if (!options.relativeDays) {
+		return formatUtcDateForDisplay(dateStr, options);
+	}
+
+	const value = (dateStr ?? "").trim().replace(utcLabelPattern, "").trim();
+	const canonicalMatch = normalizeUtcDateDisplay(value).match(canonicalDisplayPattern);
+	if (!canonicalMatch) {
+		return formatUtcDateForDisplay(dateStr, options);
+	}
+
+	const [, yearText, monthText, dayText, hourText = "00", minuteText = "00"] = canonicalMatch;
+	const dueAt = Date.UTC(
+		Number(yearText),
+		Number(monthText) - 1,
+		Number(dayText),
+		Number(hourText),
+		Number(minuteText),
+	);
+	if (Number.isNaN(dueAt)) {
+		return formatUtcDateForDisplay(dateStr, options);
+	}
+
+	const difference = dueAt - (options.now ?? new Date()).getTime();
+	const sign = difference < 0 ? "-" : "";
+	const totalHours = Math.floor(Math.abs(difference) / millisecondsPerHour);
+	const days = Math.floor(totalHours / 24);
+
+	if (days >= 2) return `(${sign}${days}d)`;
+	if (days === 1) {
+		const hours = totalHours % 24;
+		return hours > 0 ? `(${sign}1d${hours}h)` : `(${sign}1d)`;
+	}
+	if (totalHours > 0) return `(${sign}${totalHours}h)`;
+	return `(${sign}<1h)`;
 }
 
 export function formatUtcDateForDisplay(dateStr: string | undefined, options: UtcDateDisplayOptions = {}): string {

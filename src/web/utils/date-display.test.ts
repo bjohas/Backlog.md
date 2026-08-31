@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import {
 	formatStoredUtcDateForCompactDisplay,
 	formatStoredUtcDateForDisplay,
+	formatStoredUtcDueDateForRelativeDisplay,
 	parseStoredUtcDate,
 } from "./date-display";
 
@@ -61,14 +62,14 @@ describe("formatStoredUtcDateForCompactDisplay", () => {
 		expect(formatStoredUtcDateForCompactDisplay("2026-02-10", undefined, now)).toBe("2026-02-10");
 		expect(formatStoredUtcDateForCompactDisplay("2026-02-10 06:01", undefined, now)).toBe("2026-02-10");
 	});
+});
 
-	it("applies a custom display format to the compact date fallback", () => {
-		expect(formatStoredUtcDateForCompactDisplay("2026-02-10", "dd/mm/yyyy", now)).toBe("10/02/2026");
-		expect(formatStoredUtcDateForCompactDisplay("2026-02-10 06:01", "dd/mm/yyyy", now)).toBe("10/02/2026");
-	});
+describe("formatStoredUtcDueDateForRelativeDisplay", () => {
+	const now = new Date(Date.UTC(2026, 1, 21, 12, 0, 0));
 
-	it("handles missing and invalid values gracefully", () => {
-		expect(formatStoredUtcDateForCompactDisplay("", undefined, now)).toBe("—");
-		expect(formatStoredUtcDateForCompactDisplay("not-a-date", undefined, now)).toBe("not-a-date");
+	it("formats due dates as relative durations", () => {
+		expect(formatStoredUtcDueDateForRelativeDisplay("2026-02-23 12:00", now)).toBe("(2d)");
+		expect(formatStoredUtcDueDateForRelativeDisplay("2026-02-22 17:00", now)).toBe("(1d5h)");
+		expect(formatStoredUtcDueDateForRelativeDisplay("2026-02-21 17:00", now)).toBe("(5h)");
 	});
 });

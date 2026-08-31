@@ -36,9 +36,18 @@ describe("TUI task type display", () => {
 		expect(untyped).not.toContain("{magenta-fg}");
 	});
 
-	it("shows due dates on board task cards", () => {
+	it("shows configured UTC due dates on board task cards", () => {
 		const task = createTask({ dueDate: "2026-08-10 14:30" });
-		expect(formatTaskListItem(task)).toContain("due 2026-08-10 14:30 (UTC)");
+		expect(formatTaskListItem(task, false, Number.POSITIVE_INFINITY, "dd/mm/yyyy hh:mm")).toContain(
+			"due 10/08/2026 14:30 (UTC)",
+		);
+	});
+
+	it("shows relative due dates only when enabled", () => {
+		const task = createTask({ dueDate: "2026-08-10 14:30" });
+		expect(
+			formatTaskListItem(task, false, Number.POSITIVE_INFINITY, undefined, true, new Date("2026-08-31T00:00:00Z")),
+		).toContain("due (-20d)");
 	});
 
 	it("shows the type field in task details and hides it for untyped tasks", async () => {
