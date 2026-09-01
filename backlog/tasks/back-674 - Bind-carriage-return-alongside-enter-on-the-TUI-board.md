@@ -1,11 +1,11 @@
 ---
 id: BACK-674
 title: Bind carriage return alongside enter on the TUI board
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-01 12:17'
-updated_date: '2026-09-01 12:19'
+updated_date: '2026-09-01 13:18'
 labels: []
 dependencies: []
 priority: high
@@ -27,17 +27,17 @@ board.ts:1470 is the only ["enter"] registration under src/ui/, and nothing regi
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The TUI board Enter handler responds to both carriage return and linefeed key names
-- [ ] #2 Confirming a pending move with Enter persists the move on terminals that send CR
-- [ ] #3 Opening the task popup with Enter works on terminals that send CR
-- [ ] #4 A regression test asserts the board registers both key names
+- [x] #1 The TUI board Enter handler responds to both carriage return and linefeed key names
+- [x] #2 Confirming a pending move with Enter persists the move on terminals that send CR
+- [x] #3 Opening the task popup with Enter works on terminals that send CR
+- [x] #4 A regression test asserts the board registers both key names
 <!-- AC:END -->
 
 ## Definition of Done
 <!-- DOD:BEGIN -->
-- [ ] #1 bunx tsc --noEmit passes when TypeScript touched
-- [ ] #2 bun run check . passes when formatting/linting touched
-- [ ] #3 bun test (or scoped test) passes
+- [x] #1 bunx tsc --noEmit passes when TypeScript touched
+- [x] #2 bun run check . passes when formatting/linting touched
+- [x] #3 bun test (or scoped test) passes
 <!-- DOD:END -->
 
 ## Implementation Plan
@@ -59,4 +59,16 @@ Fix: added the exported BOARD_ENTER_KEYS = ["enter", "return"] constant (board.t
 Regression test added to src/test/board-ui.test.ts. Verified: bunx tsc --noEmit clean; bun test src/test/board-ui.test.ts 8 pass / 0 fail. bun run check . reports one pre-existing formatting error in src/ui/components/task-composer.ts that also fails on main with these changes stashed; left untouched as out of scope.
 
 dist/backlog rebuilt at 13:19 with the fix. AC #2 and #3 need confirmation on a terminal that delivers CR.
+
+Verified on kitty/Ubuntu, which sends CR for Enter:
+- AC #3 confirmed first: Enter opened the task popup, proving the handler now receives the key.
+- AC #2 confirmed after a separate blocker was cleared. The move was additionally failing because ~/tasks had two nested git repos; Backlog resolves the project root to the directory containing backlog/, so prepareGuardedTaskPublish ran against an outer repo that ignored the board and was out of sync. performTaskMove swallowed that throw, which is why the task flipped back with no message. After consolidating the repos, m -> arrow -> Enter persists the move.
+
+Note the two defects were independent: the keybinding stopped Enter reaching the handler at all, the repo state stopped the move persisting once it did.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Bound "return" alongside "enter" for the TUI board's Enter handler. blessed names a carriage return "return" and only a linefeed "enter" (neo-neo-bblessed/lib/keys.ts:177-184), so screen.key(["enter"]) never fired on terminals sending CR - breaking both move confirmation and task popup opening, silently. Added the exported BOARD_ENTER_KEYS constant (src/ui/board.ts) used at the registration site, following the file's existing pattern of exporting board helpers for tests since the board needs a tty to instantiate. Verified: bunx tsc --noEmit clean; biome clean on both touched files; bun test src/test/board-ui.test.ts 8 pass/0 fail; and manually on kitty/Ubuntu where Enter now both opens the task popup and confirms a pending move.
+<!-- SECTION:FINAL_SUMMARY:END -->
