@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-09-01 12:17'
-updated_date: '2026-09-01 12:18'
+updated_date: '2026-09-01 12:19'
 labels: []
 dependencies: []
 priority: high
@@ -48,3 +48,15 @@ board.ts:1470 is the only ["enter"] registration under src/ui/, and nothing regi
 3. Add a regression test asserting the board registers both "enter" and "return".
 4. Run bunx tsc --noEmit, bun run check ., and the scoped test file.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Root cause confirmed in neo-neo-bblessed/lib/keys.ts:177-184: a carriage return is named "return" and only a linefeed is named "enter". src/ui/board.ts registered only ["enter"], so on terminals sending CR the handler never fired.
+
+Fix: added the exported BOARD_ENTER_KEYS = ["enter", "return"] constant (board.ts:48) and used it at the registration site (board.ts:1473). Exporting it follows the existing pattern of exporting small board helpers for tests (hasMoveBlockingBoardFilters, shouldRebuildColumns), which is the only way to assert the binding without a tty.
+
+Regression test added to src/test/board-ui.test.ts. Verified: bunx tsc --noEmit clean; bun test src/test/board-ui.test.ts 8 pass / 0 fail. bun run check . reports one pre-existing formatting error in src/ui/components/task-composer.ts that also fails on main with these changes stashed; left untouched as out of scope.
+
+dist/backlog rebuilt at 13:19 with the fix. AC #2 and #3 need confirmation on a terminal that delivers CR.
+<!-- SECTION:NOTES:END -->
