@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdir } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { $ } from "bun";
 import { Core } from "../core/backlog.ts";
@@ -115,6 +115,44 @@ describe("guarded task publishing", () => {
 		expect((await $`git status --porcelain backlog`.cwd(localDir).text()).trim()).toBe("");
 		expect((await $`git rev-parse main`.cwd(remoteDir).text()).trim()).toBe(remoteHeadBefore);
 		expect(core.consumeTaskPublishSkipReason()).toContain("requires main to match origin/main");
+	});
+
+	it("publishes commits deferred by an earlier blocked mutation once the worktree is clean", async () => {
+		// Block the first mutation, so it lands as a local-only task commit.
+		const dirtyFile = join(localDir, "uncommitted-source.ts");
+		await Bun.write(dirtyFile, "export const pending = true;\n");
+		await core.createTaskFromInput({ title: "Deferred by dirt" });
+		expect(core.consumeTaskPublishSkipReason()).toContain("requires a clean worktree and index");
+		const remoteHeadAfterDefer = (await $`git rev-parse main`.cwd(remoteDir).text()).trim();
+
+		// Clean up; the next mutation should carry the deferred commit with it.
+		await rm(dirtyFile);
+		await core.createTaskFromInput({ title: "Drains the backlog of commits" });
+
+		expect(core.consumeTaskPublishSkipReason()).toBeNull();
+		expect((await $`git rev-parse main`.cwd(remoteDir).text()).trim()).not.toBe(remoteHeadAfterDefer);
+		// The deferred commit drained with it: nothing is left unpublished.
+		expect((await $`git rev-list --count origin/main..HEAD`.cwd(localDir).text()).trim()).toBe("0");
+		expect((await core.filesystem.listTasks()).map((task) => task.title).sort()).toEqual([
+			"Deferred by dirt",
+			"Drains the backlog of commits",
+		]);
+	});
+
+	it("still refuses when the branch has diverged from its upstream", async () => {
+		await $`git clone ${remoteDir} ${peerDir}`.quiet();
+		await Bun.write(join(peerDir, "peer-change.txt"), "from the other machine\n");
+		await $`git add peer-change.txt`.cwd(peerDir).quiet();
+		await $`git commit -m "peer: diverging work"`.cwd(peerDir).quiet();
+		await $`git push`.cwd(peerDir).quiet();
+
+		await Bun.write(join(localDir, "local-change.txt"), "local only\n");
+		await $`git add local-change.txt`.cwd(localDir).quiet();
+		await $`git commit -m "local: diverging work"`.cwd(localDir).quiet();
+
+		await core.createTaskFromInput({ title: "Diverged" });
+
+		expect(core.consumeTaskPublishSkipReason()).toContain("cannot fast-forward");
 	});
 
 	it("reports the skip reason only once", async () => {
