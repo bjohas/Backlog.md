@@ -1571,6 +1571,10 @@ export async function renderBoardTui(
 				}
 				moveOp = null;
 				renderView();
+				// Without this the task just springs back, indistinguishable from a
+				// keypress that never registered. Guarded-publish preconditions in
+				// particular carry the exact remedy in their message.
+				showTransientFooter(` {red-fg}Move failed: ${error instanceof Error ? error.message : "Unknown error"}{/}`);
 			}
 		};
 		const cancelMove = () => {
