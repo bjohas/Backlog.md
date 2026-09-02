@@ -2,7 +2,9 @@ import { appendFile, mkdir, mkdtemp, realpath, rm, stat, writeFile } from "node:
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { $ } from "bun";
+import { DEFAULT_DIRECTORIES } from "../constants/index.ts";
 import type { BacklogConfig } from "../types/index.ts";
+import { normalizeProjectBacklogDirectory } from "../utils/backlog-directory.ts";
 
 type GitPathContext = {
 	repoRoot: string;
@@ -682,11 +684,36 @@ export class GitOperations {
 		}
 
 		const [head, upstreamHead] = await Promise.all([this.resolveCommit("HEAD"), this.resolveCommit(upstream.ref)]);
-		if (!head || !upstreamHead || head !== upstreamHead) {
+		if (!head || !upstreamHead) {
 			throw new Error(
 				`Guarded task publishing requires ${upstream.branch} to match ${upstream.ref}; publish or reconcile local commits first.`,
 			);
 		}
+		if (head === upstreamHead) {
+			return;
+		}
+		// Strictly ahead is the state a push resolves, and it is where a mutation
+		// deferred to a local commit leaves the branch. Publishing those is safe;
+		// publishing commits the user made for anything else is not.
+		if (!(await this.localCommitsTouchOnlyTasks(upstream.ref))) {
+			throw new Error(
+				`Guarded task publishing requires ${upstream.branch} to match ${upstream.ref}; publish or reconcile local commits first.`,
+			);
+		}
+	}
+
+	/** True when every file changed by the local-only commits lives in the task directory. */
+	private async localCommitsTouchOnlyTasks(upstreamRef: string): Promise<boolean> {
+		const backlogDir = normalizeProjectBacklogDirectory(this.config?.backlogDirectory) ?? DEFAULT_DIRECTORIES.BACKLOG;
+		const { stdout } = await this.execGit(["diff", "--name-only", `${upstreamRef}..HEAD`], { readOnly: true });
+		const changed = stdout
+			.split("\n")
+			.map((line) => line.trim())
+			.filter((line) => line.length > 0);
+		if (changed.length === 0) {
+			return false;
+		}
+		return changed.every((path) => path === backlogDir || path.startsWith(`${backlogDir}/`));
 	}
 
 	/**
