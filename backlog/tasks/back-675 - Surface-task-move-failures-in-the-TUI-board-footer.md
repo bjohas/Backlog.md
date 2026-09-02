@@ -1,11 +1,11 @@
 ---
 id: BACK-675
 title: Surface task move failures in the TUI board footer
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-02 12:25'
-updated_date: '2026-09-02 12:25'
+updated_date: '2026-09-02 12:50'
 labels: []
 dependencies: []
 priority: high
@@ -30,17 +30,17 @@ The board already has showTransientFooter for exactly this kind of message, used
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A failed task move shows the underlying error message in the board footer instead of silently reverting
-- [ ] #2 The footer message is derived from the thrown error, so guarded-publish preconditions surface their specific text
-- [ ] #3 A successful move still shows no error and behaves as before
-- [ ] #4 Existing DEBUG logging behaviour is preserved
+- [x] #1 A failed task move shows the underlying error message in the board footer instead of silently reverting
+- [x] #2 The footer message is derived from the thrown error, so guarded-publish preconditions surface their specific text
+- [x] #3 A successful move still shows no error and behaves as before
+- [x] #4 Existing DEBUG logging behaviour is preserved
 <!-- AC:END -->
 
 ## Definition of Done
 <!-- DOD:BEGIN -->
-- [ ] #1 bunx tsc --noEmit passes when TypeScript touched
-- [ ] #2 bun run check . passes when formatting/linting touched
-- [ ] #3 bun test (or scoped test) passes
+- [x] #1 bunx tsc --noEmit passes when TypeScript touched
+- [x] #2 bun run check . passes when formatting/linting touched
+- [x] #3 bun test (or scoped test) passes
 <!-- DOD:END -->
 
 ## Implementation Plan
@@ -51,3 +51,9 @@ The board already has showTransientFooter for exactly this kind of message, used
 3. Extract the message safely (error instanceof Error ? error.message : fallback), as the nearby archive handler already does.
 4. Verify tsc, biome on touched files, and the board test suite.
 <!-- SECTION:PLAN:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Replaced the silent catch in performTaskMove (src/ui/board.ts) with a showTransientFooter call carrying the thrown error's message, reusing the board's existing transient-footer surface (already used by the archive and complete handlers). DEBUG logging and the moveOp reset/re-render are unchanged; transientFooterContent takes precedence in updateFooter so renderView does not stomp the message. Verified live on kitty: forcing a dirty worktree made m/arrow/Enter report 'Move failed: Guarded task publishing requires a clean worktree and index.' instead of silently springing back. tsc --noEmit clean, biome clean on the touched file, board suites 16 pass/0 fail.
+<!-- SECTION:FINAL_SUMMARY:END -->
