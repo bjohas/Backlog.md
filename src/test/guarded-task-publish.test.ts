@@ -90,23 +90,39 @@ describe("guarded task publishing", () => {
 		expect(actions.some((action) => action.args[0] === "push" && action.exitCode !== 0)).toBe(true);
 	});
 
-	it("refuses a task mutation when the checkout has local modifications", async () => {
+	it("commits locally without publishing when the checkout has local modifications", async () => {
 		await Bun.write(join(localDir, "uncommitted-source.ts"), "export const pending = true;\n");
+		const remoteHeadBefore = (await $`git rev-parse main`.cwd(remoteDir).text()).trim();
 
-		await expect(core.createTaskFromInput({ title: "Must not be written" })).rejects.toThrow(
-			"requires a clean worktree and index",
-		);
-		expect(await core.filesystem.listTasks()).toEqual([]);
+		await core.createTaskFromInput({ title: "Saved locally" });
+
+		expect((await core.filesystem.listTasks()).map((task) => task.title)).toEqual(["Saved locally"]);
+		// Committed, so the write cannot be lost, but deliberately not shared.
+		expect((await $`git status --porcelain backlog`.cwd(localDir).text()).trim()).toBe("");
+		expect((await $`git rev-parse main`.cwd(remoteDir).text()).trim()).toBe(remoteHeadBefore);
+		expect(core.consumeTaskPublishSkipReason()).toContain("requires a clean worktree and index");
 	});
 
-	it("refuses to publish unrelated local commits", async () => {
+	it("commits locally without publishing when unrelated local commits are unpublished", async () => {
 		await Bun.write(join(localDir, "unpublished-source.ts"), "export const unpublished = true;\n");
 		await $`git add unpublished-source.ts`.cwd(localDir).quiet();
 		await $`git commit -m "local: keep this unpublished"`.cwd(localDir).quiet();
+		const remoteHeadBefore = (await $`git rev-parse main`.cwd(remoteDir).text()).trim();
 
-		await expect(core.createTaskFromInput({ title: "Must not publish source" })).rejects.toThrow(
-			"requires main to match origin/main",
-		);
-		expect(await core.filesystem.listTasks()).toEqual([]);
+		await core.createTaskFromInput({ title: "Also saved locally" });
+
+		expect((await core.filesystem.listTasks()).map((task) => task.title)).toEqual(["Also saved locally"]);
+		expect((await $`git status --porcelain backlog`.cwd(localDir).text()).trim()).toBe("");
+		expect((await $`git rev-parse main`.cwd(remoteDir).text()).trim()).toBe(remoteHeadBefore);
+		expect(core.consumeTaskPublishSkipReason()).toContain("requires main to match origin/main");
+	});
+
+	it("reports the skip reason only once", async () => {
+		await Bun.write(join(localDir, "uncommitted-source.ts"), "export const pending = true;\n");
+
+		await core.createTaskFromInput({ title: "Read the reason once" });
+
+		expect(core.consumeTaskPublishSkipReason()).not.toBeNull();
+		expect(core.consumeTaskPublishSkipReason()).toBeNull();
 	});
 });

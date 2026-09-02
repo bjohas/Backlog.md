@@ -274,6 +274,7 @@ export class Core {
 	public git: GitOperations;
 	private contentStore?: ContentStore;
 	private searchService?: SearchService;
+	private taskPublishSkipReason: string | null = null;
 	private readonly enableWatchers: boolean;
 	private branchTaskLoader: BranchTaskLoader;
 	private projectGeneration = 0;
@@ -1133,7 +1134,15 @@ export class Core {
 			if (config?.filesystemOnly) {
 				throw new Error("Guarded task publishing cannot run in a filesystem-only project.");
 			}
-			await this.git.prepareGuardedTaskPublish();
+			try {
+				await this.git.prepareGuardedTaskPublish();
+			} catch (error) {
+				// Publishing is off the table, but abandoning the mutation would leave
+				// the user unable to edit at all. Commit locally instead: an unpublished
+				// commit is recoverable, an unpublished uncommitted write is not.
+				this.taskPublishSkipReason = error instanceof Error ? error.message : "Guarded task publishing failed.";
+				return { autoCommit: true, guardedPublish: false };
+			}
 			if (this.contentStore) await this.contentStore.refreshTasks();
 		}
 
@@ -1141,6 +1150,16 @@ export class Core {
 			autoCommit: guardedPublish || (await this.shouldAutoCommit(autoCommit)),
 			guardedPublish,
 		};
+	}
+
+	/**
+	 * Why the last task mutation was committed locally instead of published.
+	 * Read once and cleared, so each mutation reports its own outcome.
+	 */
+	consumeTaskPublishSkipReason(): string | null {
+		const reason = this.taskPublishSkipReason;
+		this.taskPublishSkipReason = null;
+		return reason;
 	}
 
 	private async publishGuardedTaskChanges(guardedPublish: boolean): Promise<void> {
