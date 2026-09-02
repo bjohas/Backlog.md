@@ -1564,6 +1564,13 @@ export async function renderBoardTui(
 
 				// Render with updated local state
 				renderView();
+
+				// The move landed locally but could not be shared; say so, or the
+				// two machines drift apart with nothing on screen to explain it.
+				const skipReason = core.consumeTaskPublishSkipReason();
+				if (skipReason) {
+					showTransientFooter(` {yellow-fg}Saved locally, not published: ${skipReason}{/}`);
+				}
 			} catch (error) {
 				// On error, cancel the move and restore original position
 				if (process.env.DEBUG) {
