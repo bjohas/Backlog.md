@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-02 13:14'
-updated_date: '2026-09-02 13:16'
+updated_date: '2026-09-02 14:53'
 labels: []
 dependencies: []
 priority: high
@@ -52,6 +52,12 @@ This preserves 'never push unrelated work' while letting deferred task commits p
 3. Derive the task directory from the existing backlog-directory resolution rather than hardcoding 'backlog'.
 4. Add tests: task-only local commits publish; a mixed/unrelated local commit still refuses; diverged still refuses; and the BACK-676 deferral drains on the next clean mutation.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Verified live on kitty: a move with a dirty worktree reported 'saved locally, not published'; after removing the stray file the next move published both, and 'git rev-list --count origin/main..HEAD' printed 0.
+<!-- SECTION:NOTES:END -->
 
 ## Final Summary
 
