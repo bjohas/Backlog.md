@@ -497,6 +497,67 @@ wait "$child_pid"
 		});
 	});
 
+	describe("guarded task sync", () => {
+		it("fast-forwards a clean branch that is behind its upstream", async () => {
+			const git = new GitOperations(process.cwd(), {
+				...TEST_CONFIG,
+				remoteOperations: true,
+				guardedTaskSync: true,
+			});
+			const commands: string[][] = [];
+			const internals = git as unknown as {
+				isRepository: () => Promise<boolean>;
+				getCurrentBranchUpstream: () => Promise<{ branch: string; ref: string; remote: string }>;
+				fetchRequired: () => Promise<void>;
+				resolveCommit: (ref: string) => Promise<string>;
+				isClean: () => Promise<boolean>;
+				execGit: (args: string[]) => Promise<{ stdout: string; stderr: string }>;
+			};
+			internals.isRepository = async () => true;
+			internals.getCurrentBranchUpstream = async () => ({ branch: "main", ref: "origin/main", remote: "origin" });
+			internals.fetchRequired = async () => {};
+			internals.resolveCommit = async (ref) => (ref === "HEAD" ? "local" : "remote");
+			internals.isClean = async () => true;
+			internals.execGit = async (args) => {
+				commands.push(args);
+				if (args[0] === "merge-base") return { stdout: "local\n", stderr: "" };
+				return { stdout: "", stderr: "" };
+			};
+
+			await expect(git.syncCurrentBranch()).resolves.toMatchObject({ status: "fast-forwarded", branch: "main" });
+			expect(commands).toEqual([
+				["merge-base", "local", "remote"],
+				["merge", "--ff-only", "origin/main"],
+			]);
+		});
+
+		it("does not advance a branch with local changes", async () => {
+			const git = new GitOperations(process.cwd(), {
+				...TEST_CONFIG,
+				remoteOperations: true,
+				guardedTaskSync: true,
+			});
+			const internals = git as unknown as {
+				isRepository: () => Promise<boolean>;
+				getCurrentBranchUpstream: () => Promise<{ branch: string; ref: string; remote: string }>;
+				fetchRequired: () => Promise<void>;
+				resolveCommit: (ref: string) => Promise<string>;
+				isClean: () => Promise<boolean>;
+				execGit: () => Promise<{ stdout: string; stderr: string }>;
+			};
+			internals.isRepository = async () => true;
+			internals.getCurrentBranchUpstream = async () => ({ branch: "main", ref: "origin/main", remote: "origin" });
+			internals.fetchRequired = async () => {};
+			internals.resolveCommit = async (ref) => (ref === "HEAD" ? "local" : "remote");
+			internals.isClean = async () => false;
+			internals.execGit = async () => {
+				throw new Error("A dirty checkout must not inspect or merge history.");
+			};
+
+			await expect(git.syncCurrentBranch()).resolves.toMatchObject({ status: "local-changes", branch: "main" });
+		});
+	});
+
 	// Note: Skipping integration tests that require git repository setup
 	// These tests can be enabled for local development but may timeout in CI
 });

@@ -404,6 +404,9 @@ export class BacklogServer {
 						GET: async () => await this.handleGetConfig(),
 						PUT: async (req: Request) => await this.handleUpdateConfig(req),
 					},
+					"/api/sync": {
+						POST: async () => await this.handleSync(),
+					},
 					"/api/docs": {
 						GET: async () => await this.handleListDocs(),
 						POST: async (req: Request) => await this.handleCreateDoc(req),
@@ -672,6 +675,17 @@ export class BacklogServer {
 
 		// For all other routes, return 404 since routes should handle all valid paths
 		return new Response("Not Found", { status: 404 });
+	}
+
+	private async handleSync(): Promise<Response> {
+		await this.ensureServicesReady();
+		const sync = await (await this.core.getGitOps()).syncCurrentBranch();
+		if (sync.status === "fast-forwarded") {
+			await this.contentStore?.refreshTasks();
+			this.broadcastTasksUpdated();
+		}
+		const status = sync.status === "local-changes" || sync.status === "ahead" || sync.status === "diverged" ? 409 : 200;
+		return Response.json(sync, { status });
 	}
 
 	// Task handlers

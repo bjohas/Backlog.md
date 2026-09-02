@@ -25,6 +25,24 @@ export interface GitIndexEntry {
 	stage: number;
 }
 
+export type GuardedTaskSyncStatus =
+	| "disabled"
+	| "not-repository"
+	| "no-upstream"
+	| "up-to-date"
+	| "fast-forwarded"
+	| "local-changes"
+	| "ahead"
+	| "diverged"
+	| "failed";
+
+export interface GuardedTaskSyncResult {
+	status: GuardedTaskSyncStatus;
+	message: string;
+	branch?: string;
+	upstream?: string;
+}
+
 function indexEntriesEqual(left: readonly GitIndexEntry[], right: readonly GitIndexEntry[]): boolean {
 	return (
 		left.length === right.length &&
@@ -60,6 +78,7 @@ export class GitOperations {
 	private readonly repositoryChecks = new Map<string, Promise<boolean>>();
 	private readonly fetches = new Map<string, Promise<void>>();
 	private readonly gitActionLogPaths = new Map<string, Promise<string | null>>();
+	private guardedTaskSyncPromise: Promise<GuardedTaskSyncResult> | null = null;
 
 	constructor(projectRoot: string, config: BacklogConfig | null = null, configLoader?: GitConfigLoader) {
 		this.projectRoot = projectRoot;
@@ -531,6 +550,109 @@ export class GitOperations {
 	async isClean(): Promise<boolean> {
 		const status = await this.getStatus();
 		return status.trim() === "";
+	}
+
+	/**
+	 * Refresh the checked-out branch for an interactive view when guarded task
+	 * sync is enabled. Fetches are safe with local edits; advancing the working
+	 * tree is deliberately limited to a clean, fast-forward-only checkout.
+	 */
+	async syncCurrentBranch(): Promise<GuardedTaskSyncResult> {
+		await this.loadConfigIfNeeded();
+		if (this.config?.guardedTaskSync !== true) {
+			return { status: "disabled", message: "Guarded task sync is disabled." };
+		}
+		if (this.config?.filesystemOnly || this.config?.remoteOperations === false) {
+			return { status: "disabled", message: "Remote operations are disabled for this project." };
+		}
+		if (!(await this.isRepository())) {
+			return { status: "not-repository", message: "This project is not a Git repository." };
+		}
+
+		if (!this.guardedTaskSyncPromise) {
+			const syncPromise = this.syncCurrentBranchOnce();
+			this.guardedTaskSyncPromise = syncPromise;
+			void syncPromise.finally(() => {
+				if (this.guardedTaskSyncPromise === syncPromise) {
+					this.guardedTaskSyncPromise = null;
+				}
+			});
+		}
+		return await this.guardedTaskSyncPromise;
+	}
+
+	private async syncCurrentBranchOnce(): Promise<GuardedTaskSyncResult> {
+		let upstream: { branch: string; ref: string; remote: string };
+		try {
+			upstream = await this.getCurrentBranchUpstream();
+		} catch (error) {
+			return {
+				status: "no-upstream",
+				message: error instanceof Error ? error.message : "The current branch has no upstream.",
+			};
+		}
+
+		try {
+			await this.fetchRequired(upstream.remote);
+			const [head, upstreamHead] = await Promise.all([this.resolveCommit("HEAD"), this.resolveCommit(upstream.ref)]);
+			if (!head || !upstreamHead) {
+				return {
+					status: "failed",
+					message: `Could not resolve ${upstream.branch} or ${upstream.ref} after fetching.`,
+					branch: upstream.branch,
+					upstream: upstream.ref,
+				};
+			}
+			if (head === upstreamHead) {
+				return {
+					status: "up-to-date",
+					message: `${upstream.branch} is up to date.`,
+					branch: upstream.branch,
+					upstream: upstream.ref,
+				};
+			}
+			if (!(await this.isClean())) {
+				return {
+					status: "local-changes",
+					message: "Local changes prevent syncing. Commit, stash, or discard them before syncing.",
+					branch: upstream.branch,
+					upstream: upstream.ref,
+				};
+			}
+
+			const { stdout: mergeBaseOutput } = await this.execGit(["merge-base", head, upstreamHead], { readOnly: true });
+			const mergeBase = mergeBaseOutput.trim();
+			if (mergeBase === head) {
+				await this.execGit(["merge", "--ff-only", upstream.ref]);
+				return {
+					status: "fast-forwarded",
+					message: `Fast-forwarded ${upstream.branch} from ${upstream.ref}.`,
+					branch: upstream.branch,
+					upstream: upstream.ref,
+				};
+			}
+			if (mergeBase === upstreamHead) {
+				return {
+					status: "ahead",
+					message: `${upstream.branch} has local commits that have not been pushed.`,
+					branch: upstream.branch,
+					upstream: upstream.ref,
+				};
+			}
+			return {
+				status: "diverged",
+				message: `${upstream.branch} diverged from ${upstream.ref}; reconcile it manually.`,
+				branch: upstream.branch,
+				upstream: upstream.ref,
+			};
+		} catch (error) {
+			return {
+				status: "failed",
+				message: error instanceof Error ? error.message : "Could not synchronize the current branch.",
+				branch: upstream.branch,
+				upstream: upstream.ref,
+			};
+		}
 	}
 
 	/**

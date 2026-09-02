@@ -363,6 +363,36 @@ export async function runUnifiedView(options: UnifiedViewOptions): Promise<void>
 				emitTaskListUpdate();
 			},
 		);
+
+		const syncInteractiveView = async (): Promise<string> => {
+			const sync = await (await options.core.getGitOps()).syncCurrentBranch();
+			if (sync.status !== "fast-forwarded") {
+				return sync.message;
+			}
+
+			const refreshed = options.tasksLoader
+				? await options.tasksLoader(() => {})
+				: {
+						tasks: await options.core.loadTasks(),
+						statuses: (await options.core.filesystem.loadConfig())?.statuses ?? ["To Do", "In Progress", "Done"],
+					};
+			tasks = refreshed.tasks.filter((task) => task.id && task.id.trim() !== "" && hasAnyPrefix(task.id));
+			kanbanStatuses = refreshed.statuses;
+			const config = await options.core.filesystem.loadConfig();
+			configuredLabels = config?.labels ?? [];
+			milestoneEntities = await options.core.filesystem.listMilestones();
+			milestoneFilterModel = buildTaskViewerMilestoneFilterModel(milestoneEntities);
+			selectedTask = selectedTask ? tasks.find((task) => task.id === selectedTask?.id) : tasks[0];
+			const state = viewSwitcher?.getState();
+			viewSwitcher?.updateState({
+				tasks,
+				selectedTask,
+				kanbanData: state?.kanbanData ? { ...state.kanbanData, tasks } : undefined,
+			});
+			emitBoardUpdate();
+			emitTaskListUpdate();
+			return sync.message;
+		};
 		let isInitialLoad = true; // Track if this is the first view load
 
 		// Create view switcher (without problematic onViewChange callback)
@@ -518,6 +548,7 @@ export async function runUnifiedView(options: UnifiedViewOptions): Promise<void>
 					priorities: config?.priorities,
 					types: config?.types,
 					hideEmptyColumns: config?.hideEmptyColumns ?? false,
+					onSync: syncInteractiveView,
 					createTask: async (input) => createTaskFromBoard(options.core, input, taskUpdateCallbacks.onTaskAdded),
 				}).then(() => {
 					// If user wants to exit, do it immediately

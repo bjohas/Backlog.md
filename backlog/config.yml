@@ -10,6 +10,8 @@ auto_open_browser: true
 default_port: 6420
 remote_operations: true
 auto_commit: false
+guarded_task_publish: false
+log_git_actions: false
 filesystem_only: false
 bypass_git_hooks: false
 check_active_branches: true

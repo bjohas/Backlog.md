@@ -204,6 +204,25 @@ describe("Config commands", () => {
 		expect(listOutput).toContain("relativeDueDates: true");
 	});
 
+	it("round-trips guardedTaskSync through config get/set/list", async () => {
+		const defaultGet = await $`bun ${CLI_PATH} config get guardedTaskSync`.cwd(TEST_DIR).text();
+		expect(defaultGet.trim()).toBe("false");
+
+		const config = await core.filesystem.loadConfig();
+		if (!config) throw new Error("Expected config");
+		config.filesystemOnly = false;
+		config.remoteOperations = true;
+		await core.filesystem.saveConfig(config);
+
+		await $`bun ${CLI_PATH} config set guardedTaskSync true`.cwd(TEST_DIR).quiet();
+
+		const afterSet = await $`bun ${CLI_PATH} config get guardedTaskSync`.cwd(TEST_DIR).text();
+		expect(afterSet.trim()).toBe("true");
+
+		const listOutput = await $`bun ${CLI_PATH} config list`.cwd(TEST_DIR).text();
+		expect(listOutput).toContain("guardedTaskSync: true");
+	});
+
 	it("round-trips guardedTaskPublish through config get/set/list", async () => {
 		const defaultGet = await $`bun ${CLI_PATH} config get guardedTaskPublish`.cwd(TEST_DIR).text();
 		expect(defaultGet.trim()).toBe("false");

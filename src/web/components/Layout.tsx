@@ -17,6 +17,8 @@ interface LayoutProps {
 	loadingMessage?: string | null;
 	error?: Error | null;
 	onRefreshData: () => Promise<void>;
+	onSync: () => Promise<void>;
+	syncMessage?: string | null;
 	duplicateRepairPlan?: DuplicateRepairPlan | null;
 }
 
@@ -31,6 +33,8 @@ export default function Layout({
 	loadingMessage,
 	error,
 	onRefreshData,
+	onSync,
+	syncMessage,
 	duplicateRepairPlan = null,
 }: LayoutProps) {
 	return (
@@ -47,7 +51,7 @@ export default function Layout({
 				onRefreshData={onRefreshData}
 			/>
 			<div className="flex-1 flex flex-col min-h-0 min-w-0">
-				<Navigation projectName={projectName} />
+				<Navigation projectName={projectName} onSync={onSync} syncMessage={syncMessage} />
 				<DuplicateIdWarning plan={duplicateRepairPlan} onRepaired={onRefreshData} />
 				<main className="flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden">
 					<Outlet context={{ tasks, docs, decisions, isLoading, onRefreshData }} />

@@ -62,6 +62,7 @@ export interface InitializeProjectOptions {
 		activeBranchDays?: number;
 		bypassGitHooks?: boolean;
 		autoCommit?: boolean;
+		guardedTaskSync?: boolean;
 		guardedTaskPublish?: boolean;
 		logGitActions?: boolean;
 		zeroPaddedIds?: number;
@@ -126,6 +127,7 @@ export async function initializeProject(
 				remoteOperations: false,
 				bypassGitHooks: false,
 				autoCommit: false,
+				guardedTaskSync: false,
 				guardedTaskPublish: false,
 				logGitActions: false,
 			}
@@ -146,6 +148,7 @@ export async function initializeProject(
 		maxColumnWidth: 20,
 		filesystemOnly: effectiveFilesystemOnly || d.filesystemOnly,
 		autoCommit: normalizedAdvancedConfig.autoCommit ?? existingConfig?.autoCommit ?? d.autoCommit,
+		guardedTaskSync: normalizedAdvancedConfig.guardedTaskSync ?? existingConfig?.guardedTaskSync ?? d.guardedTaskSync,
 		guardedTaskPublish:
 			normalizedAdvancedConfig.guardedTaskPublish ?? existingConfig?.guardedTaskPublish ?? d.guardedTaskPublish,
 		logGitActions: normalizedAdvancedConfig.logGitActions ?? existingConfig?.logGitActions ?? d.logGitActions,
@@ -170,6 +173,7 @@ export async function initializeProject(
 		projectName,
 		filesystemOnly: effectiveFilesystemOnly || d.filesystemOnly,
 		autoCommit: normalizedAdvancedConfig.autoCommit ?? existingConfig?.autoCommit ?? d.autoCommit,
+		guardedTaskSync: normalizedAdvancedConfig.guardedTaskSync ?? existingConfig?.guardedTaskSync ?? d.guardedTaskSync,
 		guardedTaskPublish:
 			normalizedAdvancedConfig.guardedTaskPublish ?? existingConfig?.guardedTaskPublish ?? d.guardedTaskPublish,
 		logGitActions: normalizedAdvancedConfig.logGitActions ?? existingConfig?.logGitActions ?? d.logGitActions,

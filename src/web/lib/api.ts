@@ -37,6 +37,22 @@ export interface InitializationStatus {
 	rootConfigPath?: string | null;
 }
 
+export type GuardedTaskSyncResult = {
+	status:
+		| "disabled"
+		| "not-repository"
+		| "no-upstream"
+		| "up-to-date"
+		| "fast-forwarded"
+		| "local-changes"
+		| "ahead"
+		| "diverged"
+		| "failed";
+	message: string;
+	branch?: string;
+	upstream?: string;
+};
+
 // Enhanced error types for better error handling
 export class ApiError extends Error {
 	constructor(
@@ -386,6 +402,10 @@ export class ApiClient {
 			throw new Error("Failed to update config");
 		}
 		return response.json();
+	}
+
+	async syncCurrentBranch(): Promise<GuardedTaskSyncResult> {
+		return this.fetchJson<GuardedTaskSyncResult>(`${API_BASE}/sync`, { method: "POST" });
 	}
 
 	async fetchDocs(): Promise<Document[]> {

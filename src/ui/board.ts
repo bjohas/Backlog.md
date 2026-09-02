@@ -321,6 +321,7 @@ export async function renderBoardTui(
 		hideEmptyColumns?: boolean;
 		projectName?: string;
 		createTask?: (input: TaskCreateInput) => Promise<Task>;
+		onSync?: () => Promise<string>;
 		screen?: ScreenInterface;
 		taskComposer?: (options: TaskComposerOptions) => Promise<Task | null>;
 	},
@@ -1086,6 +1087,23 @@ export async function renderBoardTui(
 			pendingSearchWrap = null;
 			focusFilterControl("search");
 			updateFooter();
+		});
+
+		screen.key(["r", "R"], async () => {
+			if (popupOpen || filterPopupOpen || modalOpen || moveOp || currentFocus === "filters") return;
+			if (!options?.onSync) {
+				showTransientFooter(" {gray-fg}Guarded task sync is disabled.{/}");
+				return;
+			}
+			try {
+				showTransientFooter(" {cyan-fg}Syncing current branch…{/}", 3000);
+				showTransientFooter(` {green-fg}${await options.onSync()}{/}`, 6000);
+			} catch (error) {
+				showTransientFooter(
+					` {red-fg}${error instanceof Error ? error.message : "Could not synchronize the current branch."}{/}`,
+					6000,
+				);
+			}
 		});
 
 		screen.key(["n", "N", "S-n"], async () => {

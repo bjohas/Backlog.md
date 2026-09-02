@@ -341,6 +341,11 @@ export interface BacklogConfig {
 	remoteOperations?: boolean;
 	autoCommit?: boolean;
 	/**
+	 * Before interactive views refresh their working branch, require a clean
+	 * checkout and permit only a fast-forward update from its upstream.
+	 */
+	guardedTaskSync?: boolean;
+	/**
 	 * Before publishing a task mutation, require a clean checkout synchronized
 	 * with its upstream; then commit and push the task files.
 	 */
