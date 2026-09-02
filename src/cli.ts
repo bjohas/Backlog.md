@@ -134,6 +134,7 @@ const CONFIG_GET_KEYS = [
 	"autoOpenBrowser",
 	"remoteOperations",
 	"autoCommit",
+	"guardedTaskSync",
 	"guardedTaskPublish",
 	"logGitActions",
 	"filesystemOnly",
@@ -157,6 +158,7 @@ const CONFIG_SET_KEYS = [
 	"defaultPort",
 	"remoteOperations",
 	"autoCommit",
+	"guardedTaskSync",
 	"guardedTaskPublish",
 	"logGitActions",
 	"filesystemOnly",
@@ -4142,6 +4144,10 @@ async function handleBoardView(options: { layout?: string; vertical?: boolean; m
 		initialView: "kanban",
 		milestoneMode: options.milestones,
 		tasksLoader: async (updateProgress) => {
+			const sync = await (await core.getGitOps()).syncCurrentBranch();
+			if (sync.status === "fast-forwarded") {
+				updateProgress(sync.message);
+			}
 			const [tasks, milestoneEntities, archivedMilestones] = await Promise.all([
 				core.loadTasks((msg) => {
 					updateProgress(msg);
@@ -4673,7 +4679,7 @@ agentsCmd
 
 // Config command group
 const CONFIG_AVAILABLE_KEYS =
-	"Available keys: defaultEditor, projectName, defaultAssignee, defaultStatus, statuses, labels, priorities, types, milestones, definitionOfDone, dateFormat, relativeDueDates, maxColumnWidth, taskListPaneWidth, documentBaseUrl, defaultPort, autoOpenBrowser, hideEmptyColumns, remoteOperations, autoCommit, guardedTaskPublish, logGitActions, filesystemOnly, bypassGitHooks, zeroPaddedIds, checkActiveBranches, activeBranchDays";
+	"Available keys: defaultEditor, projectName, defaultAssignee, defaultStatus, statuses, labels, priorities, types, milestones, definitionOfDone, dateFormat, relativeDueDates, maxColumnWidth, taskListPaneWidth, documentBaseUrl, defaultPort, autoOpenBrowser, hideEmptyColumns, remoteOperations, autoCommit, guardedTaskSync, guardedTaskPublish, logGitActions, filesystemOnly, bypassGitHooks, zeroPaddedIds, checkActiveBranches, activeBranchDays";
 
 const configCmd = addHelpSchema(program.command("config"), {
 	reads: "Project Backlog.md configuration",
@@ -4723,6 +4729,7 @@ const configCmd = addHelpSchema(program.command("config"), {
 			console.log(`  Auto open browser: ${mergedConfig.autoOpenBrowser ?? true}`);
 			console.log(`  Bypass git hooks: ${mergedConfig.bypassGitHooks ?? false}`);
 			console.log(`  Auto commit: ${mergedConfig.autoCommit ?? false}`);
+			console.log(`  Guarded task sync: ${mergedConfig.guardedTaskSync ?? false}`);
 			console.log(`  Guarded task publish: ${mergedConfig.guardedTaskPublish ?? false}`);
 			console.log(`  Log Git actions: ${mergedConfig.logGitActions ?? false}`);
 			console.log(`  Definition of Done defaults: ${(mergedConfig.definitionOfDone ?? []).join(" | ") || "(none)"}`);
@@ -4857,6 +4864,9 @@ addHelpSchema(configCmd.command("get <key>"), {
 					break;
 				case "autoCommit":
 					console.log(config.autoCommit?.toString() || "");
+					break;
+				case "guardedTaskSync":
+					console.log(config.guardedTaskSync?.toString() || "false");
 					break;
 				case "guardedTaskPublish":
 					console.log(config.guardedTaskPublish?.toString() || "");
@@ -5028,6 +5038,7 @@ addHelpSchema(configCmd.command("set <key> <value>"), {
 					} else if (boolValue === "false" || boolValue === "0" || boolValue === "no") {
 						config.remoteOperations = false;
 						config.guardedTaskPublish = false;
+						config.guardedTaskSync = false;
 					} else {
 						console.error("remoteOperations must be true or false");
 						process.exit(1);
@@ -5042,6 +5053,22 @@ addHelpSchema(configCmd.command("set <key> <value>"), {
 						config.autoCommit = false;
 					} else {
 						console.error("autoCommit must be true or false");
+						process.exit(1);
+					}
+					break;
+				}
+				case "guardedTaskSync": {
+					const boolValue = value.toLowerCase();
+					if (boolValue === "true" || boolValue === "1" || boolValue === "yes") {
+						if (config.remoteOperations === false || config.filesystemOnly) {
+							console.error("guardedTaskSync requires remoteOperations to be enabled in a Git-backed project");
+							process.exit(1);
+						}
+						config.guardedTaskSync = true;
+					} else if (boolValue === "false" || boolValue === "0" || boolValue === "no") {
+						config.guardedTaskSync = false;
+					} else {
+						console.error("guardedTaskSync must be true or false");
 						process.exit(1);
 					}
 					break;
@@ -5085,6 +5112,7 @@ addHelpSchema(configCmd.command("set <key> <value>"), {
 						config.checkActiveBranches = false;
 						config.remoteOperations = false;
 						config.autoCommit = false;
+						config.guardedTaskSync = false;
 						config.guardedTaskPublish = false;
 						config.logGitActions = false;
 						config.bypassGitHooks = false;
@@ -5229,6 +5257,7 @@ addHelpSchema(configCmd.command("list"), {
 			console.log(`  defaultPort: ${config.defaultPort ?? "(not set)"}`);
 			console.log(`  remoteOperations: ${config.remoteOperations ?? "(not set)"}`);
 			console.log(`  autoCommit: ${config.autoCommit ?? "(not set)"}`);
+			console.log(`  guardedTaskSync: ${config.guardedTaskSync ?? "false"}`);
 			console.log(`  guardedTaskPublish: ${config.guardedTaskPublish ?? "false"}`);
 			console.log(`  logGitActions: ${config.logGitActions ?? "false"}`);
 			console.log(`  filesystemOnly: ${config.filesystemOnly ?? "false"}`);

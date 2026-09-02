@@ -70,6 +70,7 @@ export const DEFAULT_INIT_CONFIG = {
 	activeBranchDays: 30,
 	bypassGitHooks: false,
 	autoCommit: false,
+	guardedTaskSync: false,
 	guardedTaskPublish: false,
 	logGitActions: false,
 	filesystemOnly: false,

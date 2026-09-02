@@ -208,6 +208,7 @@ function AppContent() {
   const [loadingMessage, setLoadingMessage] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<Error | null>(null);
   const [duplicateRepairPlan, setDuplicateRepairPlan] = useState<DuplicateRepairPlan | null>(null);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
   
   const { isOnline } = useHealthCheckContext();
   const previousOnlineRef = useRef<boolean | null>(null);
@@ -556,6 +557,30 @@ function AppContent() {
     window.dispatchEvent(new Event('drafts-updated'));
   }, [loadAllData]);
 
+  const handleSync = useCallback(async () => {
+    try {
+      const sync = await apiClient.syncCurrentBranch();
+      setSyncMessage(sync.message);
+      if (sync.status === "fast-forwarded") {
+        await refreshData();
+      }
+    } catch (error) {
+      setSyncMessage(error instanceof Error ? error.message : "Could not synchronize the current branch.");
+    }
+  }, [refreshData]);
+
+  useEffect(() => {
+    if (isInitialized !== true) return;
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void handleSync();
+      }
+    };
+    void handleSync();
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, [handleSync, isInitialized]);
+
 	const applyReorderedTasks = useCallback((updatedTasks: Task[], requestTask: Task) => {
 		setTasks((current) => {
 			const currentRequest = current.find((task) => task.id === requestTask.id);
@@ -750,6 +775,8 @@ function AppContent() {
                 loadingMessage={loadingMessage}
                 error={loadError}
                 onRefreshData={refreshData}
+                onSync={handleSync}
+                syncMessage={syncMessage}
                 duplicateRepairPlan={duplicateRepairPlan}
               />
             }

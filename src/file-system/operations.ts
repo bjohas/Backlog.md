@@ -2149,6 +2149,9 @@ ${description || `Milestone: ${title}`}`,
 				case "auto_commit":
 					config.autoCommit = value.toLowerCase() === "true";
 					break;
+				case "guarded_task_sync":
+					config.guardedTaskSync = value.toLowerCase() === "true";
+					break;
 				case "guarded_task_publish":
 					config.guardedTaskPublish = value.toLowerCase() === "true";
 					break;
@@ -2204,6 +2207,7 @@ ${description || `Milestone: ${title}`}`,
 			autoOpenBrowser: config.autoOpenBrowser,
 			hideEmptyColumns: config.hideEmptyColumns,
 			relativeDueDates: config.relativeDueDates,
+			guardedTaskSync: config.guardedTaskSync,
 			guardedTaskPublish: config.guardedTaskPublish,
 			logGitActions: config.logGitActions,
 			defaultPort: config.defaultPort,
@@ -2249,6 +2253,7 @@ ${description || `Milestone: ${title}`}`,
 			...(config.defaultPort ? [`default_port: ${config.defaultPort}`] : []),
 			...(typeof config.remoteOperations === "boolean" ? [`remote_operations: ${config.remoteOperations}`] : []),
 			...(typeof config.autoCommit === "boolean" ? [`auto_commit: ${config.autoCommit}`] : []),
+			...(typeof config.guardedTaskSync === "boolean" ? [`guarded_task_sync: ${config.guardedTaskSync}`] : []),
 			...(typeof config.guardedTaskPublish === "boolean" ? [`guarded_task_publish: ${config.guardedTaskPublish}`] : []),
 			...(typeof config.logGitActions === "boolean" ? [`log_git_actions: ${config.logGitActions}`] : []),
 			...(typeof config.filesystemOnly === "boolean" ? [`filesystem_only: ${config.filesystemOnly}`] : []),

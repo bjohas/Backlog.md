@@ -16,6 +16,7 @@ export function migrateConfig(config: Partial<BacklogConfig>): BacklogConfig {
 		defaultPort: 6420,
 		remoteOperations: true,
 		autoCommit: false,
+		guardedTaskSync: false,
 		guardedTaskPublish: false,
 		logGitActions: false,
 		bypassGitHooks: false,
@@ -52,6 +53,7 @@ export function needsMigration(config: Partial<BacklogConfig>): boolean {
 		{ field: "autoOpenBrowser", hasDefault: true },
 		{ field: "remoteOperations", hasDefault: true },
 		{ field: "autoCommit", hasDefault: true },
+		{ field: "guardedTaskSync", hasDefault: true },
 		{ field: "guardedTaskPublish", hasDefault: true },
 		{ field: "logGitActions", hasDefault: true },
 	];

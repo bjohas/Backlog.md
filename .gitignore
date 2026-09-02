@@ -69,3 +69,7 @@ test-benchmark-report.json
 
 # TUI screenshot captures
 .tui-screenshots
+
+.terminal-wrapper-logs/
+.twrw
+pr-list-new-task/
