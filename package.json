@@ -100,8 +100,5 @@
   ],
   "patchedDependencies": {
     "neo-neo-bblessed@1.0.9": "patches/neo-neo-bblessed@1.0.9.patch"
-  },
-  "dependencies": {
-    "bun": "^1.4.0"
   }
 }
