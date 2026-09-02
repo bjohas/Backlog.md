@@ -3,11 +3,11 @@ id: BACK-676
 title: >-
   Degrade guarded task publish to a local commit instead of refusing the
   mutation
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-02 12:50'
-updated_date: '2026-09-02 12:50'
+updated_date: '2026-09-02 13:06'
 labels: []
 dependencies: []
 priority: high
@@ -34,19 +34,19 @@ Both currently assert the task is not written at all.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A task mutation blocked by a dirty worktree is still applied and committed locally, with no push
-- [ ] #2 A task mutation blocked by a branch ahead of or diverged from its upstream behaves the same way
-- [ ] #3 The reason publishing was skipped is surfaced to the user rather than swallowed
-- [ ] #4 The TUI board shows that reason after a move that succeeded locally but was not published
-- [ ] #5 A successful guarded publish still fetches, fast-forwards, commits and pushes as before
-- [ ] #6 The two tests encoding the old refuse-outright contract are rewritten to assert the new behaviour
+- [x] #1 A task mutation blocked by a dirty worktree is still applied and committed locally, with no push
+- [x] #2 A task mutation blocked by a branch ahead of or diverged from its upstream behaves the same way
+- [x] #3 The reason publishing was skipped is surfaced to the user rather than swallowed
+- [x] #4 The TUI board shows that reason after a move that succeeded locally but was not published
+- [x] #5 A successful guarded publish still fetches, fast-forwards, commits and pushes as before
+- [x] #6 The two tests encoding the old refuse-outright contract are rewritten to assert the new behaviour
 <!-- AC:END -->
 
 ## Definition of Done
 <!-- DOD:BEGIN -->
-- [ ] #1 bunx tsc --noEmit passes when TypeScript touched
-- [ ] #2 bun run check . passes when formatting/linting touched
-- [ ] #3 bun test (or scoped test) passes
+- [x] #1 bunx tsc --noEmit passes when TypeScript touched
+- [x] #2 bun run check . passes when formatting/linting touched
+- [x] #3 bun test (or scoped test) passes
 <!-- DOD:END -->
 
 ## Implementation Plan
@@ -59,3 +59,9 @@ Both currently assert the task is not written at all.
 5. Rewrite the two tests in guarded-task-publish.test.ts to assert the task is written, committed locally, and not pushed.
 6. Verify tsc, biome on touched files, and the guarded-publish + board suites.
 <!-- SECTION:PLAN:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+getTaskMutationCommitMode now catches the prepareGuardedTaskPublish throw, records the reason, and returns { autoCommit: true, guardedPublish: false } so the mutation is applied and committed locally with the push skipped. commitFiles stages explicit paths, so unrelated dirt is never swept into the task commit. The reason is exposed through consumeTaskPublishSkipReason, a consume-once accessor, and the board shows it after a successful move as a yellow 'Saved locally, not published: ...' footer, distinct from BACK-675's red 'Move failed:'. The two tests encoding the old refuse-outright contract were rewritten to assert the task is written, committed, and not pushed, plus a new consume-once test. Verified: guarded-task-publish suite 5 pass/0 fail, tsc --noEmit clean, biome clean on all touched files, and live on kitty with a deliberately dirty worktree.
+<!-- SECTION:FINAL_SUMMARY:END -->
