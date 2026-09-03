@@ -84,7 +84,9 @@ describe("Core", () => {
 			}
 			await core.filesystem.saveConfig({
 				...config,
+				// Fixture commits use fixed dates; pin the window so they cannot age out of it.
 				checkActiveBranches: true,
+				activeBranchDays: 3650,
 				remoteOperations: false,
 				taskResolutionStrategy: "most_progressed",
 				prefixes: { ...config.prefixes, task: "back" },
@@ -583,7 +585,9 @@ describe("Core", () => {
 			}
 			await core.filesystem.saveConfig({
 				...config,
+				// Fixture commits use fixed dates; pin the window so they cannot age out of it.
 				checkActiveBranches: true,
+				activeBranchDays: 3650,
 				remoteOperations: false,
 				prefixes: { ...config.prefixes, task: "back" },
 			});
@@ -635,7 +639,9 @@ describe("Core", () => {
 			}
 			await core.filesystem.saveConfig({
 				...config,
+				// Fixture commits use fixed dates; pin the window so they cannot age out of it.
 				checkActiveBranches: true,
+				activeBranchDays: 3650,
 				remoteOperations: false,
 				prefixes: { ...config.prefixes, task: "back" },
 			});
