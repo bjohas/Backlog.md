@@ -147,11 +147,23 @@ call it.
 
 ## Upstream PR candidates (clean branches, not in this fork)
 
-Three focused, independent branches based on `upstream/main` (commit 9a42e89),
-created for contribution back to MrLesk/Backlog.md. Each branch lives in its own
+Focused, independent branches based on `upstream/main`, each created for
+contribution back to MrLesk/Backlog.md. Each branch lives in its own
 worktree under `/home/bjohas/development/git/Backlog.md-worktrees/` and contains
 only source and test changes required for its PR, with no fork-specific metadata,
 task files, or config changes.
+
+### `pr/enter-key` (worktree: `enter-key/`)
+**Status:** ✅ Submitted — [PR #1002](https://github.com/MrLesk/Backlog.md/pull/1002)
+**Target:** no upstream issue — narrow bug fix, filed directly
+**Changes:**
+- `src/ui/board.ts`: bind `"return"` alongside `"enter"` via a new exported `BOARD_ENTER_KEYS`
+- `src/test/board-ui.test.ts`: assert both key names are bound
+
+blessed names a carriage return `return` and only a linefeed `enter`, so the
+board's Enter handler never fired on terminals that send CR (kitty on Linux among
+them) — silently breaking both move confirmation and task popup opening. Based on
+`upstream/main` at 3c7fde65. Fork task BACK-674. Tests: 8 pass locally.
 
 ### `pr/osc52-clipboard` (worktree: `osc52/`)
 **Status:** ✅ Submitted — [PR #961](https://github.com/MrLesk/Backlog.md/pull/961)
