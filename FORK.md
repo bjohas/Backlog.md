@@ -155,7 +155,7 @@ task files, or config changes.
 
 ### `pr/enter-key` (worktree: `enter-key/`)
 **Status:** ✅ Submitted — [PR #1002](https://github.com/MrLesk/Backlog.md/pull/1002)
-**Target:** no upstream issue — narrow bug fix, filed directly
+**Issue:** [#1003](https://github.com/MrLesk/Backlog.md/issues/1003)
 **Changes:**
 - `src/ui/board.ts`: bind `"return"` alongside `"enter"` via a new exported `BOARD_ENTER_KEYS`
 - `src/test/board-ui.test.ts`: assert both key names are bound
