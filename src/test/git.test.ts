@@ -498,7 +498,7 @@ wait "$child_pid"
 	});
 
 	describe("guarded task sync", () => {
-		it("fast-forwards a clean branch that is behind its upstream", async () => {
+		it("fast-forwards only the SHA pinned after fetch", async () => {
 			const git = new GitOperations(process.cwd(), {
 				...TEST_CONFIG,
 				remoteOperations: true,
@@ -507,16 +507,25 @@ wait "$child_pid"
 			const commands: string[][] = [];
 			const internals = git as unknown as {
 				isRepository: () => Promise<boolean>;
-				getCurrentBranchUpstream: () => Promise<{ branch: string; ref: string; remote: string }>;
+				getCurrentBranchUpstream: () => Promise<{ branch: string; mergeRef: string; ref: string; remote: string }>;
 				fetchRequired: () => Promise<void>;
 				resolveCommit: (ref: string) => Promise<string>;
 				isClean: () => Promise<boolean>;
 				execGit: (args: string[]) => Promise<{ stdout: string; stderr: string }>;
 			};
 			internals.isRepository = async () => true;
-			internals.getCurrentBranchUpstream = async () => ({ branch: "main", ref: "origin/main", remote: "origin" });
+			internals.getCurrentBranchUpstream = async () => ({
+				branch: "main",
+				mergeRef: "refs/heads/main",
+				ref: "origin/main",
+				remote: "origin",
+			});
 			internals.fetchRequired = async () => {};
-			internals.resolveCommit = async (ref) => (ref === "HEAD" ? "local" : "remote");
+			let headResolutions = 0;
+			internals.resolveCommit = async (ref) => {
+				if (ref === "HEAD") return ++headResolutions === 4 ? "pinned-remote" : "local";
+				return "pinned-remote";
+			};
 			internals.isClean = async () => true;
 			internals.execGit = async (args) => {
 				commands.push(args);
@@ -526,35 +535,295 @@ wait "$child_pid"
 
 			await expect(git.syncCurrentBranch()).resolves.toMatchObject({ status: "fast-forwarded", branch: "main" });
 			expect(commands).toEqual([
-				["merge-base", "local", "remote"],
-				["merge", "--ff-only", "origin/main"],
+				["merge-base", "local", "pinned-remote"],
+				["merge", "--ff-only", "pinned-remote"],
 			]);
 		});
 
-		it("does not advance a branch with local changes", async () => {
+		it("refuses when the checked-out branch changes during fetch", async () => {
 			const git = new GitOperations(process.cwd(), {
 				...TEST_CONFIG,
 				remoteOperations: true,
 				guardedTaskSync: true,
 			});
+			const commands: string[][] = [];
 			const internals = git as unknown as {
 				isRepository: () => Promise<boolean>;
-				getCurrentBranchUpstream: () => Promise<{ branch: string; ref: string; remote: string }>;
+				getCurrentBranchUpstream: () => Promise<{ branch: string; mergeRef: string; ref: string; remote: string }>;
+				fetchRequired: () => Promise<void>;
+				resolveCommit: (ref: string) => Promise<string>;
+				execGit: (args: string[]) => Promise<{ stdout: string; stderr: string }>;
+			};
+			internals.isRepository = async () => true;
+			let snapshots = 0;
+			internals.getCurrentBranchUpstream = async () =>
+				++snapshots === 1
+					? { branch: "main", mergeRef: "refs/heads/main", ref: "origin/main", remote: "origin" }
+					: { branch: "release", mergeRef: "refs/heads/release", ref: "origin/release", remote: "origin" };
+			internals.fetchRequired = async () => {};
+			internals.resolveCommit = async () => "local";
+			internals.execGit = async (args) => {
+				commands.push(args);
+				return { stdout: "", stderr: "" };
+			};
+
+			await expect(git.syncCurrentBranch()).resolves.toMatchObject({ status: "checkout-changed", branch: "main" });
+			expect(commands.filter(([command]) => command === "merge")).toEqual([]);
+		});
+
+		it("refuses when HEAD changes before the final merge revalidation", async () => {
+			const git = new GitOperations(process.cwd(), {
+				...TEST_CONFIG,
+				remoteOperations: true,
+				guardedTaskSync: true,
+			});
+			const commands: string[][] = [];
+			const internals = git as unknown as {
+				isRepository: () => Promise<boolean>;
+				getCurrentBranchUpstream: () => Promise<{ branch: string; mergeRef: string; ref: string; remote: string }>;
 				fetchRequired: () => Promise<void>;
 				resolveCommit: (ref: string) => Promise<string>;
 				isClean: () => Promise<boolean>;
-				execGit: () => Promise<{ stdout: string; stderr: string }>;
+				execGit: (args: string[]) => Promise<{ stdout: string; stderr: string }>;
 			};
 			internals.isRepository = async () => true;
-			internals.getCurrentBranchUpstream = async () => ({ branch: "main", ref: "origin/main", remote: "origin" });
+			internals.getCurrentBranchUpstream = async () => ({
+				branch: "main",
+				mergeRef: "refs/heads/main",
+				ref: "origin/main",
+				remote: "origin",
+			});
+			internals.fetchRequired = async () => {};
+			let headResolutions = 0;
+			internals.resolveCommit = async (ref) => {
+				if (ref !== "HEAD") return "remote";
+				return ++headResolutions === 3 ? "moved" : "local";
+			};
+			internals.isClean = async () => true;
+			internals.execGit = async (args) => {
+				commands.push(args);
+				if (args[0] === "merge-base") return { stdout: "local\n", stderr: "" };
+				return { stdout: "", stderr: "" };
+			};
+
+			await expect(git.syncCurrentBranch()).resolves.toMatchObject({ status: "checkout-changed" });
+			expect(commands.filter(([command]) => command === "merge")).toEqual([]);
+		});
+
+		it("refuses when the upstream configuration changes during fetch", async () => {
+			const git = new GitOperations(process.cwd(), {
+				...TEST_CONFIG,
+				remoteOperations: true,
+				guardedTaskSync: true,
+			});
+			const commands: string[][] = [];
+			const internals = git as unknown as {
+				isRepository: () => Promise<boolean>;
+				getCurrentBranchUpstream: () => Promise<{ branch: string; mergeRef: string; ref: string; remote: string }>;
+				fetchRequired: () => Promise<void>;
+				resolveCommit: () => Promise<string>;
+				execGit: (args: string[]) => Promise<{ stdout: string; stderr: string }>;
+			};
+			internals.isRepository = async () => true;
+			let snapshots = 0;
+			internals.getCurrentBranchUpstream = async () =>
+				++snapshots === 1
+					? { branch: "main", mergeRef: "refs/heads/main", ref: "origin/main", remote: "origin" }
+					: { branch: "main", mergeRef: "refs/heads/main", ref: "backup/main", remote: "backup" };
+			internals.fetchRequired = async () => {};
+			internals.resolveCommit = async () => "local";
+			internals.execGit = async (args) => {
+				commands.push(args);
+				return { stdout: "", stderr: "" };
+			};
+
+			await expect(git.syncCurrentBranch()).resolves.toMatchObject({ status: "checkout-changed" });
+			expect(commands.filter(([command]) => command === "merge")).toEqual([]);
+		});
+
+		it("does not advance a branch with local changes after fetching", async () => {
+			const git = new GitOperations(process.cwd(), {
+				...TEST_CONFIG,
+				remoteOperations: true,
+				guardedTaskSync: true,
+			});
+			const commands: string[][] = [];
+			const internals = git as unknown as {
+				isRepository: () => Promise<boolean>;
+				getCurrentBranchUpstream: () => Promise<{ branch: string; mergeRef: string; ref: string; remote: string }>;
+				fetchRequired: () => Promise<void>;
+				resolveCommit: (ref: string) => Promise<string>;
+				isClean: () => Promise<boolean>;
+				execGit: (args: string[]) => Promise<{ stdout: string; stderr: string }>;
+			};
+			internals.isRepository = async () => true;
+			internals.getCurrentBranchUpstream = async () => ({
+				branch: "main",
+				mergeRef: "refs/heads/main",
+				ref: "origin/main",
+				remote: "origin",
+			});
 			internals.fetchRequired = async () => {};
 			internals.resolveCommit = async (ref) => (ref === "HEAD" ? "local" : "remote");
 			internals.isClean = async () => false;
-			internals.execGit = async () => {
-				throw new Error("A dirty checkout must not inspect or merge history.");
+			internals.execGit = async (args) => {
+				commands.push(args);
+				return { stdout: "", stderr: "" };
 			};
 
 			await expect(git.syncCurrentBranch()).resolves.toMatchObject({ status: "local-changes", branch: "main" });
+			expect(commands.filter(([command]) => command === "merge")).toEqual([]);
+		});
+
+		it("rechecks cleanliness immediately before merging", async () => {
+			const git = new GitOperations(process.cwd(), {
+				...TEST_CONFIG,
+				remoteOperations: true,
+				guardedTaskSync: true,
+			});
+			const commands: string[][] = [];
+			const internals = git as unknown as {
+				isRepository: () => Promise<boolean>;
+				getCurrentBranchUpstream: () => Promise<{ branch: string; mergeRef: string; ref: string; remote: string }>;
+				fetchRequired: () => Promise<void>;
+				resolveCommit: (ref: string) => Promise<string>;
+				isClean: () => Promise<boolean>;
+				execGit: (args: string[]) => Promise<{ stdout: string; stderr: string }>;
+			};
+			internals.isRepository = async () => true;
+			internals.getCurrentBranchUpstream = async () => ({
+				branch: "main",
+				mergeRef: "refs/heads/main",
+				ref: "origin/main",
+				remote: "origin",
+			});
+			internals.fetchRequired = async () => {};
+			internals.resolveCommit = async (ref) => (ref === "HEAD" ? "local" : "remote");
+			let cleanChecks = 0;
+			internals.isClean = async () => ++cleanChecks === 1;
+			internals.execGit = async (args) => {
+				commands.push(args);
+				if (args[0] === "merge-base") return { stdout: "local\n", stderr: "" };
+				return { stdout: "", stderr: "" };
+			};
+
+			await expect(git.syncCurrentBranch()).resolves.toMatchObject({ status: "local-changes" });
+			expect(cleanChecks).toBe(2);
+			expect(commands.filter(([command]) => command === "merge")).toEqual([]);
+		});
+
+		it("reports a failed result when the merge does not reach the pinned SHA", async () => {
+			const git = new GitOperations(process.cwd(), {
+				...TEST_CONFIG,
+				remoteOperations: true,
+				guardedTaskSync: true,
+			});
+			const commands: string[][] = [];
+			const internals = git as unknown as {
+				isRepository: () => Promise<boolean>;
+				getCurrentBranchUpstream: () => Promise<{ branch: string; mergeRef: string; ref: string; remote: string }>;
+				fetchRequired: () => Promise<void>;
+				resolveCommit: (ref: string) => Promise<string>;
+				isClean: () => Promise<boolean>;
+				execGit: (args: string[]) => Promise<{ stdout: string; stderr: string }>;
+			};
+			internals.isRepository = async () => true;
+			internals.getCurrentBranchUpstream = async () => ({
+				branch: "main",
+				mergeRef: "refs/heads/main",
+				ref: "origin/main",
+				remote: "origin",
+			});
+			internals.fetchRequired = async () => {};
+			let headResolutions = 0;
+			internals.resolveCommit = async (ref) => {
+				if (ref === "HEAD") return ++headResolutions === 4 ? "unexpected" : "local";
+				return "pinned-remote";
+			};
+			internals.isClean = async () => true;
+			internals.execGit = async (args) => {
+				commands.push(args);
+				if (args[0] === "merge-base") return { stdout: "local\n", stderr: "" };
+				return { stdout: "", stderr: "" };
+			};
+
+			await expect(git.syncCurrentBranch()).resolves.toMatchObject({ status: "failed" });
+			expect(commands).toContainEqual(["merge", "--ff-only", "pinned-remote"]);
+		});
+
+		it("classifies a merge-base exit without a common ancestor as diverged", async () => {
+			const git = new GitOperations(process.cwd(), {
+				...TEST_CONFIG,
+				remoteOperations: true,
+				guardedTaskSync: true,
+			});
+			const commands: string[][] = [];
+			const internals = git as unknown as {
+				isRepository: () => Promise<boolean>;
+				getCurrentBranchUpstream: () => Promise<{ branch: string; mergeRef: string; ref: string; remote: string }>;
+				fetchRequired: () => Promise<void>;
+				resolveCommit: (ref: string) => Promise<string>;
+				isClean: () => Promise<boolean>;
+				execGit: (
+					args: string[],
+					options?: { acceptedExitCodes?: readonly number[] },
+				) => Promise<{ stdout: string; stderr: string }>;
+			};
+			internals.isRepository = async () => true;
+			internals.getCurrentBranchUpstream = async () => ({
+				branch: "main",
+				mergeRef: "refs/heads/main",
+				ref: "origin/main",
+				remote: "origin",
+			});
+			internals.fetchRequired = async () => {};
+			internals.resolveCommit = async (ref) => (ref === "HEAD" ? "local" : "remote");
+			internals.isClean = async () => true;
+			internals.execGit = async (args, options) => {
+				commands.push(args);
+				if (args[0] === "merge-base") {
+					expect(options?.acceptedExitCodes).toEqual([1]);
+					return { stdout: "", stderr: "" };
+				}
+				return { stdout: "", stderr: "" };
+			};
+
+			await expect(git.syncCurrentBranch()).resolves.toMatchObject({
+				status: "diverged",
+				message: "main has no common history with origin/main; reconcile it manually.",
+			});
+			expect(commands.filter(([command]) => command === "merge")).toEqual([]);
+		});
+
+		it("uses the same identity-safe inspection before guarded publishing", async () => {
+			const git = new GitOperations(process.cwd(), { ...TEST_CONFIG, remoteOperations: true });
+			const commands: string[][] = [];
+			const internals = git as unknown as {
+				isRepository: () => Promise<boolean>;
+				getCurrentBranchUpstream: () => Promise<{ branch: string; mergeRef: string; ref: string; remote: string }>;
+				fetchRequired: () => Promise<void>;
+				resolveCommit: (ref: string) => Promise<string>;
+				isClean: () => Promise<boolean>;
+				execGit: (args: string[]) => Promise<{ stdout: string; stderr: string }>;
+			};
+			internals.isRepository = async () => true;
+			let snapshots = 0;
+			internals.getCurrentBranchUpstream = async () =>
+				++snapshots === 1
+					? { branch: "main", mergeRef: "refs/heads/main", ref: "origin/main", remote: "origin" }
+					: { branch: "release", mergeRef: "refs/heads/release", ref: "origin/release", remote: "origin" };
+			internals.fetchRequired = async () => {};
+			internals.resolveCommit = async () => "local";
+			internals.isClean = async () => true;
+			internals.execGit = async (args) => {
+				commands.push(args);
+				return { stdout: "", stderr: "" };
+			};
+
+			await expect(git.prepareGuardedTaskPublish()).rejects.toThrow(
+				"Guarded task publishing stopped because the checked-out branch changed during synchronization.",
+			);
+			expect(commands.filter(([command]) => command === "merge")).toEqual([]);
 		});
 	});
 

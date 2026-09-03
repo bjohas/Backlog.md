@@ -1,7 +1,12 @@
 import { describe, expect, it } from "bun:test";
-import type { Task } from "../types/index.ts";
+import type { GuardedTaskSyncResult, Task } from "../types/index.ts";
 import type { ColumnData } from "../ui/board.ts";
-import { BOARD_ENTER_KEYS, hasMoveBlockingBoardFilters, shouldRebuildColumns } from "../ui/board.ts";
+import {
+	BOARD_ENTER_KEYS,
+	getGuardedTaskSyncTone,
+	hasMoveBlockingBoardFilters,
+	shouldRebuildColumns,
+} from "../ui/board.ts";
 
 // Helper to create a minimal valid Task for testing
 const createTestTask = (id: string, title: string, status: string): Task => ({
@@ -75,6 +80,28 @@ describe("Board TUI Logic", () => {
 			expect(hasMoveBlockingBoardFilters({ ...baseFilters, searchQuery: "auth" })).toBe(true);
 			expect(hasMoveBlockingBoardFilters({ ...baseFilters, typeFilter: ["bug"] })).toBe(true);
 			expect(hasMoveBlockingBoardFilters({ ...baseFilters, labelFilter: ["bug"] })).toBe(true);
+		});
+	});
+
+	describe("getGuardedTaskSyncTone", () => {
+		it("maps every guarded synchronization result to its intended TUI tone", () => {
+			const expectedTones: Record<GuardedTaskSyncResult["status"], "green" | "yellow" | "gray" | "red"> = {
+				disabled: "gray",
+				"not-repository": "gray",
+				"no-upstream": "yellow",
+				"up-to-date": "green",
+				"fast-forwarded": "green",
+				"local-changes": "yellow",
+				ahead: "yellow",
+				diverged: "yellow",
+				"checkout-changed": "yellow",
+				busy: "yellow",
+				failed: "red",
+			};
+
+			for (const [status, tone] of Object.entries(expectedTones)) {
+				expect(getGuardedTaskSyncTone({ status: status as GuardedTaskSyncResult["status"], message: "" })).toBe(tone);
+			}
 		});
 	});
 

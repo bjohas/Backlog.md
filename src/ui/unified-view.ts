@@ -4,7 +4,7 @@
 
 import type { Core } from "../core/backlog.ts";
 import { findLocalDuplicateTaskIds } from "../core/duplicate-task-repair.ts";
-import type { Milestone, Task, TaskCreateInput } from "../types/index.ts";
+import type { GuardedTaskSyncResult, Milestone, Task, TaskCreateInput } from "../types/index.ts";
 import { watchConfig } from "../utils/config-watcher.ts";
 import { formatDuplicateTaskIdSummary } from "../utils/duplicate-detection.ts";
 import { collectAvailableLabels } from "../utils/label-filter.ts";
@@ -21,9 +21,7 @@ export interface UnifiedViewOptions {
 	initialView: ViewType;
 	selectedTask?: Task;
 	tasks?: Task[];
-	tasksLoader?: (
-		updateProgress: (message: string) => void,
-	) => Promise<{ tasks: Task[]; statuses: string[]; readinessTasks?: Task[] }>;
+	tasksLoader?: (updateProgress: (message: string) => void) => Promise<UnifiedViewLoadResult>;
 	loadingScreenFactory?: (initialMessage: string) => Promise<LoadingScreen | null>;
 	title?: string;
 	filter?: {
@@ -227,9 +225,7 @@ export async function loadTasksForUnifiedView(
 
 	const loader =
 		options.tasksLoader ||
-		(async (
-			updateProgress: (message: string) => void,
-		): Promise<{ tasks: Task[]; statuses: string[]; readinessTasks?: Task[] }> => {
+		(async (updateProgress: (message: string) => void): Promise<UnifiedViewLoadResult> => {
 			const tasks = await core.loadTasks(updateProgress);
 			const config = await core.filesystem.loadConfig();
 			return {
@@ -331,7 +327,13 @@ export async function runUnifiedView(options: UnifiedViewOptions): Promise<void>
 		let selectedTask: Task | undefined = options.selectedTask;
 		let tasks = baseTasks;
 		let kanbanStatuses = loadedStatuses ?? [];
-		let boardUpdater: ((nextTasks: Task[], nextStatuses: string[]) => void) | null = null;
+		let boardUpdater:
+			| ((
+					nextTasks: Task[],
+					nextStatuses: string[],
+					presentation?: { availableLabels: string[]; availableMilestones: string[] },
+			  ) => void)
+			| null = null;
 		let taskListUpdater:
 			| ((nextTasks: Task[], nextStatuses: string[], nextLabels: string[], nextSelectedTask?: Task) => void)
 			| null = null;
@@ -342,7 +344,10 @@ export async function runUnifiedView(options: UnifiedViewOptions): Promise<void>
 
 		const emitBoardUpdate = () => {
 			if (!boardUpdater) return;
-			boardUpdater(getRenderableTasks(), kanbanStatuses);
+			boardUpdater(getRenderableTasks(), kanbanStatuses, {
+				availableLabels: getBoardAvailableLabels(),
+				availableMilestones: getBoardAvailableMilestones(),
+			});
 		};
 		const emitTaskListUpdate = () => {
 			if (!taskListUpdater) return;
@@ -364,12 +369,13 @@ export async function runUnifiedView(options: UnifiedViewOptions): Promise<void>
 			},
 		);
 
-		const syncInteractiveView = async (): Promise<string> => {
-			const sync = await (await options.core.getGitOps()).syncCurrentBranch();
+		const syncInteractiveView = async (): Promise<GuardedTaskSyncResult> => {
+			const sync = await options.core.syncCurrentBranch();
 			if (sync.status !== "fast-forwarded") {
-				return sync.message;
+				return sync;
 			}
 
+			options.core.filesystem.invalidateConfigCache();
 			const refreshed = options.tasksLoader
 				? await options.tasksLoader(() => {})
 				: {
@@ -382,16 +388,17 @@ export async function runUnifiedView(options: UnifiedViewOptions): Promise<void>
 			configuredLabels = config?.labels ?? [];
 			milestoneEntities = await options.core.filesystem.listMilestones();
 			milestoneFilterModel = buildTaskViewerMilestoneFilterModel(milestoneEntities);
-			selectedTask = selectedTask ? tasks.find((task) => task.id === selectedTask?.id) : tasks[0];
+			const selectedTaskId = selectedTask?.id;
+			selectedTask = selectedTaskId ? tasks.find((task) => task.id === selectedTaskId) : tasks[0];
 			const state = viewSwitcher?.getState();
 			viewSwitcher?.updateState({
 				tasks,
 				selectedTask,
-				kanbanData: state?.kanbanData ? { ...state.kanbanData, tasks } : undefined,
+				kanbanData: state?.kanbanData ? { ...state.kanbanData, tasks, statuses: kanbanStatuses } : undefined,
 			});
 			emitBoardUpdate();
 			emitTaskListUpdate();
-			return sync.message;
+			return sync;
 		};
 		let isInitialLoad = true; // Track if this is the first view load
 

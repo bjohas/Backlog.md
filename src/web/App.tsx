@@ -22,6 +22,7 @@ import {
 	type Document,
 	type DocumentSearchResult,
 	type BacklogConfig,
+	type GuardedTaskSyncResult,
 	type Milestone,
 	type SearchResult,
 	type Task,
@@ -37,6 +38,8 @@ import { getTaskTypeValues } from '../utils/task-type-config';
 import { createUrlPath } from './utils/urlHelpers';
 import { filterKanbanTasks } from './utils/kanban-tasks';
 import { parseBrowserLoadingState } from '../utils/browser-loading-state';
+
+export const AUTO_SYNC_FRESHNESS_MS = 60_000;
 
 type TaskRouteNavigationState = {
   taskModalFrom?: string;
@@ -208,7 +211,9 @@ function AppContent() {
   const [loadingMessage, setLoadingMessage] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<Error | null>(null);
   const [duplicateRepairPlan, setDuplicateRepairPlan] = useState<DuplicateRepairPlan | null>(null);
-  const [syncMessage, setSyncMessage] = useState<string | null>(null);
+  const [syncResult, setSyncResult] = useState<GuardedTaskSyncResult | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [isSyncPending, setIsSyncPending] = useState(false);
   
   const { isOnline } = useHealthCheckContext();
   const previousOnlineRef = useRef<boolean | null>(null);
@@ -216,6 +221,8 @@ function AppContent() {
   const loadAllDataRequestRef = useRef(0);
   const pendingDataRequestRef = useRef<number | null>(null);
   const protocolOnlyLoadingRef = useRef(false);
+  const lastStructuredSyncAtRef = useRef<number | null>(null);
+  const syncRequestRef = useRef<Promise<void> | null>(null);
   const location = useLocation();
   const navigate = useNavigate();
   const tasksRouteWithTitle = useMatch('/tasks/:id/:title');
@@ -557,26 +564,46 @@ function AppContent() {
     window.dispatchEvent(new Event('drafts-updated'));
   }, [loadAllData]);
 
-  const handleSync = useCallback(async () => {
-    try {
-      const sync = await apiClient.syncCurrentBranch();
-      setSyncMessage(sync.message);
-      if (sync.status === "fast-forwarded") {
-        await refreshData();
-      }
-    } catch (error) {
-      setSyncMessage(error instanceof Error ? error.message : "Could not synchronize the current branch.");
+  const handleSync = useCallback((manual = true): Promise<void> => {
+    if (syncRequestRef.current) {
+      return syncRequestRef.current;
     }
+
+    const lastStructuredSyncAt = lastStructuredSyncAtRef.current;
+    if (!manual && lastStructuredSyncAt !== null && Date.now() - lastStructuredSyncAt < AUTO_SYNC_FRESHNESS_MS) {
+      return Promise.resolve();
+    }
+
+    const request = (async () => {
+      setIsSyncPending(true);
+      setSyncError(null);
+      try {
+        const sync = await apiClient.syncCurrentBranch();
+        lastStructuredSyncAtRef.current = Date.now();
+        setSyncResult(sync);
+        if (sync.status === "fast-forwarded") {
+          await refreshData();
+        }
+      } catch (error) {
+        setSyncResult(null);
+        setSyncError(error instanceof Error ? error.message : "Could not synchronize the current branch.");
+      } finally {
+        syncRequestRef.current = null;
+        setIsSyncPending(false);
+      }
+    })();
+    syncRequestRef.current = request;
+    return request;
   }, [refreshData]);
 
   useEffect(() => {
     if (isInitialized !== true) return;
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible") {
-        void handleSync();
+        void handleSync(false);
       }
     };
-    void handleSync();
+    void handleSync(false);
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => document.removeEventListener("visibilitychange", onVisibilityChange);
   }, [handleSync, isInitialized]);
@@ -776,7 +803,9 @@ function AppContent() {
                 error={loadError}
                 onRefreshData={refreshData}
                 onSync={handleSync}
-                syncMessage={syncMessage}
+                syncResult={syncResult}
+                syncError={syncError}
+                isSyncPending={isSyncPending}
                 duplicateRepairPlan={duplicateRepairPlan}
               />
             }

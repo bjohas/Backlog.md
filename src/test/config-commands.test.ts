@@ -5,6 +5,7 @@ import type { PromptRunner } from "../commands/advanced-config-wizard.ts";
 import { configureAdvancedSettings } from "../commands/configure-advanced-settings.ts";
 import { DEFAULT_STATUSES } from "../constants/index.ts";
 import { Core } from "../core/backlog.ts";
+import { isGuardedTaskSyncEnabled } from "../types/index.ts";
 import { getTestCliPath } from "./test-cli.ts";
 import { createUniqueTestDir, initializeFilesystemTestProject, safeCleanup } from "./test-utils.ts";
 
@@ -240,6 +241,48 @@ describe("Config commands", () => {
 
 		const listOutput = await $`bun ${CLI_PATH} config list`.cwd(TEST_DIR).text();
 		expect(listOutput).toContain("guardedTaskPublish: true");
+	});
+
+	it.each([
+		{ sync: false, publish: false, enabled: false },
+		{ sync: true, publish: false, enabled: true },
+		{ sync: false, publish: true, enabled: true },
+		{ sync: true, publish: true, enabled: true },
+	])("keeps guarded sync preferences independent for sync=$sync and publish=$publish", async ({
+		sync,
+		publish,
+		enabled,
+	}) => {
+		const preparedConfig = await core.filesystem.loadConfig();
+		if (!preparedConfig) throw new Error("Expected config");
+		preparedConfig.filesystemOnly = false;
+		preparedConfig.remoteOperations = true;
+		await core.filesystem.saveConfig(preparedConfig);
+		await $`bun ${CLI_PATH} config set guardedTaskSync ${String(sync)}`.cwd(TEST_DIR).quiet();
+		await $`bun ${CLI_PATH} config set guardedTaskPublish ${String(publish)}`.cwd(TEST_DIR).quiet();
+
+		expect((await $`bun ${CLI_PATH} config get guardedTaskSync`.cwd(TEST_DIR).text()).trim()).toBe(String(sync));
+		expect((await $`bun ${CLI_PATH} config get guardedTaskPublish`.cwd(TEST_DIR).text()).trim()).toBe(String(publish));
+
+		core.filesystem.invalidateConfigCache();
+		const config = await core.filesystem.loadConfig();
+		expect(config?.guardedTaskSync).toBe(sync);
+		expect(config?.guardedTaskPublish).toBe(publish);
+		expect(isGuardedTaskSyncEnabled(config)).toBe(enabled);
+	});
+
+	it("keeps the dedicated guarded sync preference when publish is disabled", async () => {
+		const preparedConfig = await core.filesystem.loadConfig();
+		if (!preparedConfig) throw new Error("Expected config");
+		preparedConfig.filesystemOnly = false;
+		preparedConfig.remoteOperations = true;
+		await core.filesystem.saveConfig(preparedConfig);
+		await $`bun ${CLI_PATH} config set guardedTaskSync true`.cwd(TEST_DIR).quiet();
+		await $`bun ${CLI_PATH} config set guardedTaskPublish true`.cwd(TEST_DIR).quiet();
+		await $`bun ${CLI_PATH} config set guardedTaskPublish false`.cwd(TEST_DIR).quiet();
+
+		expect((await $`bun ${CLI_PATH} config get guardedTaskSync`.cwd(TEST_DIR).text()).trim()).toBe("true");
+		expect((await $`bun ${CLI_PATH} config get guardedTaskPublish`.cwd(TEST_DIR).text()).trim()).toBe("false");
 	});
 
 	it("round-trips logGitActions through config get/set/list", async () => {

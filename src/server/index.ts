@@ -679,12 +679,19 @@ export class BacklogServer {
 
 	private async handleSync(): Promise<Response> {
 		await this.ensureServicesReady();
-		const sync = await (await this.core.getGitOps()).syncCurrentBranch();
+		const sync = await this.core.syncCurrentBranch();
 		if (sync.status === "fast-forwarded") {
-			await this.contentStore?.refreshTasks();
+			await this.contentStore?.refreshAllFromDisk();
 			this.broadcastTasksUpdated();
 		}
-		const status = sync.status === "local-changes" || sync.status === "ahead" || sync.status === "diverged" ? 409 : 200;
+		const status =
+			sync.status === "local-changes" ||
+			sync.status === "ahead" ||
+			sync.status === "diverged" ||
+			sync.status === "checkout-changed" ||
+			sync.status === "busy"
+				? 409
+				: 200;
 		return Response.json(sync, { status });
 	}
 

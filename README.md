@@ -319,6 +319,22 @@ Run `backlog config` with no arguments to launch the interactive wizard (the sam
 
 For filesystem-only projects (`backlog init --no-git`), the saved config forces `checkActiveBranches=false`, `remoteOperations=false`, and `autoCommit=false` so CLI, Web, and MCP local-file workflows do not depend on a Git repository.
 
+### Guarded Git sync
+
+For Git-backed projects, these optional YAML settings make `backlog board` and `backlog browser` safely fetch and fast-forward their current checkout:
+
+```yaml
+guarded_task_sync: false
+guarded_task_publish: false
+```
+
+Both default to `false`. `guarded_task_sync` is the dedicated viewing and refresh preference. Setting `guarded_task_publish: true` also enables the same effective guarded sync and task-mutation protection, but does not change the stored `guarded_task_sync` value; disabling publish reveals that raw preference again.
+
+Guarded sync never merges a non-fast-forward change. Safe refusal states are `local-changes` (a dirty worktree or index), `ahead` (local commits not on the upstream), `diverged` (different histories, including no common history), `no-upstream` (no tracking branch), `checkout-changed` (the branch, upstream, or HEAD moved during sync), and `busy` (another guarded sync or task mutation holds the repository lock). Resolve the reported condition manually, then retry.
+
+In the Web UI, automatic sync runs on initial load and when the tab becomes visible, but no more than once per 60 seconds after a completed structured sync response. The **Sync** button always bypasses that freshness window, while joining an already-running sync instead of starting a second one.
+
+
 ### Definition of Done defaults
 
 Set project-wide DoD items with `backlog config` (or during `backlog init` advanced setup), in the Web UI (Settings → Definition of Done Defaults), or by editing the project config file directly:

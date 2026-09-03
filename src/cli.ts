@@ -4133,9 +4133,6 @@ function addBoardOptions(cmd: Command) {
 async function handleBoardView(options: { layout?: string; vertical?: boolean; milestones?: boolean }) {
 	const cwd = await requireProjectRoot();
 	const core = new Core(cwd);
-	const config = await core.filesystem.loadConfig();
-
-	const statuses = config?.statuses || [];
 
 	// Use unified view for Tab switching support
 	const { runUnifiedView } = await import("./ui/unified-view.ts");
@@ -4144,10 +4141,13 @@ async function handleBoardView(options: { layout?: string; vertical?: boolean; m
 		initialView: "kanban",
 		milestoneMode: options.milestones,
 		tasksLoader: async (updateProgress) => {
-			const sync = await (await core.getGitOps()).syncCurrentBranch();
+			const sync = await core.syncCurrentBranch();
 			if (sync.status === "fast-forwarded") {
+				core.filesystem.invalidateConfigCache();
 				updateProgress(sync.message);
 			}
+			const config = await core.filesystem.loadConfig();
+			const statuses = config?.statuses || [];
 			const [tasks, milestoneEntities, archivedMilestones] = await Promise.all([
 				core.loadTasks((msg) => {
 					updateProgress(msg);
@@ -5037,8 +5037,6 @@ addHelpSchema(configCmd.command("set <key> <value>"), {
 						config.remoteOperations = true;
 					} else if (boolValue === "false" || boolValue === "0" || boolValue === "no") {
 						config.remoteOperations = false;
-						config.guardedTaskPublish = false;
-						config.guardedTaskSync = false;
 					} else {
 						console.error("remoteOperations must be true or false");
 						process.exit(1);

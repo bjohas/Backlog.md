@@ -3,6 +3,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { $ } from "bun";
 import { Core } from "../core/backlog.ts";
+import type { GuardedTaskSyncResult } from "../types/index.ts";
 import { createUniqueTestDir, initializeTestProject, safeCleanup } from "./test-utils.ts";
 
 let localDir: string;
@@ -63,6 +64,41 @@ describe("guarded task publishing", () => {
 		const peer = new Core(peerDir);
 		expect((await peer.filesystem.loadTask(task.id))?.status).toBe("In Progress");
 		peer.disposeContentStore();
+	});
+
+	it("keeps the repository lock through identity-safe preparation and publication", async () => {
+		await $`git clone ${remoteDir} ${peerDir}`.quiet();
+		await Bun.write(join(peerDir, "remote-change.txt"), "from the other machine\n");
+		await $`git add remote-change.txt`.cwd(peerDir).quiet();
+		await $`git commit -m "peer: add remote change"`.cwd(peerDir).quiet();
+		await $`git push`.cwd(peerDir).quiet();
+
+		const publish = core.gitOps.publishGuardedTaskChanges.bind(core.gitOps);
+		let observer: Core | undefined;
+		let observerSync: Promise<GuardedTaskSyncResult> | undefined;
+		core.gitOps.publishGuardedTaskChanges = async () => {
+			observer = new Core(localDir);
+			let observerSyncSettled = false;
+			observerSync = observer.syncCurrentBranch().finally(() => {
+				observerSyncSettled = true;
+			});
+			await Promise.resolve();
+			expect(observerSyncSettled).toBe(false);
+			await publish();
+		};
+
+		try {
+			const { task } = await core.createTaskFromInput({ title: "Publish under the repository lock" });
+
+			expect(await Bun.file(join(localDir, "remote-change.txt")).text()).toBe("from the other machine\n");
+			expect((await observerSync)?.status).toBe("up-to-date");
+			await $`git pull --ff-only`.cwd(peerDir).quiet();
+			const peer = new Core(peerDir);
+			expect((await peer.filesystem.loadTask(task.id))?.title).toBe("Publish under the repository lock");
+			peer.disposeContentStore();
+		} finally {
+			observer?.disposeContentStore();
+		}
 	});
 
 	it("rejects a raced push while retaining the local task commit", async () => {

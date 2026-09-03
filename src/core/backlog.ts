@@ -8,6 +8,7 @@ import {
 	FileSystem,
 	isConfigValueError,
 	isCreateLockError,
+	isGuardedTaskSyncLockError,
 	newTaskLockError,
 } from "../file-system/operations.ts";
 import { type GitBranchTip, type GitIndexEntry, GitOperations } from "../git/operations.ts";
@@ -23,6 +24,8 @@ import {
 	type DocumentType,
 	type DocumentUpdateInput,
 	EntityType,
+	type GuardedTaskSyncResult,
+	isGuardedTaskSyncEnabled,
 	isLocalEditableTask,
 	type Milestone,
 	type SearchFilters,
@@ -275,6 +278,7 @@ export class Core {
 	private contentStore?: ContentStore;
 	private searchService?: SearchService;
 	private taskPublishSkipReason: string | null = null;
+	private syncCurrentBranchPromise: Promise<GuardedTaskSyncResult> | null = null;
 	private readonly enableWatchers: boolean;
 	private branchTaskLoader: BranchTaskLoader;
 	private projectGeneration = 0;
@@ -1123,33 +1127,44 @@ export class Core {
 		return config?.autoCommit ?? false;
 	}
 
-	private async getTaskMutationCommitMode(autoCommit?: boolean): Promise<{
-		autoCommit: boolean;
-		guardedPublish: boolean;
-	}> {
+	private async withTaskMutationTransaction<T>(
+		autoCommit: boolean | undefined,
+		mutate: (commitMode: { autoCommit: boolean; guardedPublish: boolean }, markPublished: () => void) => Promise<T>,
+	): Promise<T> {
 		const config = await this.fs.loadConfig();
 		this.git.setConfig(config);
 		const guardedPublish = config?.guardedTaskPublish === true;
-		if (guardedPublish) {
-			if (config?.filesystemOnly) {
-				throw new Error("Guarded task publishing cannot run in a filesystem-only project.");
-			}
-			try {
-				await this.git.prepareGuardedTaskPublish();
-			} catch (error) {
-				// Publishing is off the table, but abandoning the mutation would leave
-				// the user unable to edit at all. Commit locally instead: an unpublished
-				// commit is recoverable, an unpublished uncommitted write is not.
-				this.taskPublishSkipReason = error instanceof Error ? error.message : "Guarded task publishing failed.";
-				return { autoCommit: true, guardedPublish: false };
-			}
-			if (this.contentStore) await this.contentStore.refreshTasks();
-		}
 
-		return {
-			autoCommit: guardedPublish || (await this.shouldAutoCommit(autoCommit)),
-			guardedPublish,
+		const run = async (): Promise<T> => {
+			let commitMode = {
+				autoCommit: guardedPublish || (config?.filesystemOnly ? false : (autoCommit ?? config?.autoCommit ?? false)),
+				guardedPublish,
+			};
+			if (guardedPublish) {
+				if (config?.filesystemOnly) {
+					throw new Error("Guarded task publishing cannot run in a filesystem-only project.");
+				}
+				try {
+					await this.git.prepareGuardedTaskPublish();
+					if (this.contentStore) await this.contentStore.refreshTasks();
+				} catch (error) {
+					// Publishing is off the table, but abandoning the mutation would leave
+					// the user unable to edit at all. Commit locally instead: an unpublished
+					// commit is recoverable, an unpublished uncommitted write is not.
+					this.taskPublishSkipReason = error instanceof Error ? error.message : "Guarded task publishing failed.";
+					commitMode = { autoCommit: true, guardedPublish: false };
+				}
+			}
+
+			let shouldPublish = false;
+			const result = await mutate(commitMode, () => {
+				shouldPublish = true;
+			});
+			if (commitMode.guardedPublish && shouldPublish) await this.git.publishGuardedTaskChanges();
+			return result;
 		};
+
+		return isGuardedTaskSyncEnabled(config) ? await this.fs.withGuardedTaskSyncLock(run) : await run();
 	}
 
 	/**
@@ -1162,8 +1177,29 @@ export class Core {
 		return reason;
 	}
 
-	private async publishGuardedTaskChanges(guardedPublish: boolean): Promise<void> {
-		if (guardedPublish) await this.git.publishGuardedTaskChanges();
+	async syncCurrentBranch(): Promise<GuardedTaskSyncResult> {
+		if (!this.syncCurrentBranchPromise) {
+			this.syncCurrentBranchPromise = (async (): Promise<GuardedTaskSyncResult> => {
+				const config = await this.fs.loadConfig();
+				this.git.setConfig(config);
+				try {
+					return isGuardedTaskSyncEnabled(config)
+						? await this.fs.withGuardedTaskSyncLock(async () => await this.git.syncCurrentBranch())
+						: await this.git.syncCurrentBranch();
+				} catch (error) {
+					if (!isGuardedTaskSyncLockError(error)) throw error;
+					return {
+						status: "busy",
+						message: "Another Backlog task synchronization or mutation is already in progress. Please try again.",
+					};
+				}
+			})().finally(() => {
+				this.syncCurrentBranchPromise = null;
+			});
+		}
+		const syncPromise = this.syncCurrentBranchPromise;
+		if (!syncPromise) throw new Error("Guarded task synchronization did not start.");
+		return await syncPromise;
 	}
 
 	async getGitOps() {
@@ -1688,98 +1724,101 @@ export class Core {
 		// assignee replaces it entirely, and an explicit empty list means "unassigned".
 		const resolvedAssignees =
 			input.assignee === undefined ? (normalizeStringList(config?.defaultAssignee) ?? []) : normalizedAssignees;
-		const mutationCommitMode = isDraft
-			? { autoCommit: await this.shouldAutoCommit(autoCommit), guardedPublish: false }
-			: await this.getTaskMutationCommitMode(autoCommit);
+		const run = async (
+			mutationCommitMode: { autoCommit: boolean; guardedPublish: boolean },
+			markPublished?: () => void,
+		) => {
+			const { task, write } = await this.withCreateLock(async () => {
+				const parentTaskId = requestedParentTaskId
+					? await this.resolveParentTaskIdForCreate(requestedParentTaskId)
+					: undefined;
+				const id = await this.generateNextId(entityType, isDraft ? undefined : parentTaskId);
+				const ordinal = await this.resolveCreateOrdinal(input.ordinal, isDraft);
+				const task: Task = {
+					id,
+					title: input.title.trim(),
+					status: resolvedStatus,
+					assignee: resolvedAssignees,
+					labels: normalizedLabels,
+					dependencies: validDependencies,
+					references: normalizedReferences,
+					documentation: normalizedDocumentation,
+					modifiedFiles: normalizedModifiedFiles,
+					rawContent: input.rawContent ?? "",
+					createdDate,
+					...(dueDate && { dueDate }),
+					...(parentTaskId && { parentTaskId }),
+					...(priority && { priority }),
+					...(type && { type }),
+					...(typeof ordinal === "number" && { ordinal }),
+					...(typeof input.milestone === "string" &&
+						input.milestone.trim().length > 0 && {
+							milestone: input.milestone.trim(),
+						}),
+					...(typeof input.description === "string" && { description: input.description }),
+					...(typeof input.implementationPlan === "string" && { implementationPlan: input.implementationPlan }),
+					...(typeof input.implementationNotes === "string" && { implementationNotes: input.implementationNotes }),
+					...(typeof input.finalSummary === "string" && { finalSummary: input.finalSummary }),
+					...(acceptanceCriteriaItems.length > 0 && { acceptanceCriteriaItems }),
+					...(definitionOfDoneItems && definitionOfDoneItems.length > 0 && { definitionOfDoneItems }),
+				};
 
-		const { task, write } = await this.withCreateLock(async () => {
-			const parentTaskId = requestedParentTaskId
-				? await this.resolveParentTaskIdForCreate(requestedParentTaskId)
-				: undefined;
-			const id = await this.generateNextId(entityType, isDraft ? undefined : parentTaskId);
-			const ordinal = await this.resolveCreateOrdinal(input.ordinal, isDraft);
-			const task: Task = {
-				id,
-				title: input.title.trim(),
-				status: resolvedStatus,
-				assignee: resolvedAssignees,
-				labels: normalizedLabels,
-				dependencies: validDependencies,
-				references: normalizedReferences,
-				documentation: normalizedDocumentation,
-				modifiedFiles: normalizedModifiedFiles,
-				rawContent: input.rawContent ?? "",
-				createdDate,
-				...(dueDate && { dueDate }),
-				...(parentTaskId && { parentTaskId }),
-				...(priority && { priority }),
-				...(type && { type }),
-				...(typeof ordinal === "number" && { ordinal }),
-				...(typeof input.milestone === "string" &&
-					input.milestone.trim().length > 0 && {
-						milestone: input.milestone.trim(),
-					}),
-				...(typeof input.description === "string" && { description: input.description }),
-				...(typeof input.implementationPlan === "string" && { implementationPlan: input.implementationPlan }),
-				...(typeof input.implementationNotes === "string" && { implementationNotes: input.implementationNotes }),
-				...(typeof input.finalSummary === "string" && { finalSummary: input.finalSummary }),
-				...(acceptanceCriteriaItems.length > 0 && { acceptanceCriteriaItems }),
-				...(definitionOfDoneItems && definitionOfDoneItems.length > 0 && { definitionOfDoneItems }),
-			};
+				const resolvedPreviousPath = isDraft
+					? await this.fs.resolveDraftFilePath(task.id)
+					: await getTaskPath(task.id, this);
+				const targetPath = await this.fs.getTaskWritePath(task, isDraft);
+				const targetContent = await this.readFileIfPresent(targetPath);
+				const previousPath = targetContent ? targetPath : resolvedPreviousPath;
+				const previousContent = targetContent ?? (await this.readFileIfPresent(resolvedPreviousPath));
+				const previousIndexEntries = mutationCommitMode.autoCommit
+					? await this.git.getIndexEntries(targetPath)
+					: undefined;
+				const filePath = await this.writePreparedTask(task, isDraft);
+				const createdContent = await readFile(filePath);
+				const write: CreatedTaskWrite = {
+					filePath,
+					createdContent,
+					previousPath,
+					previousContent,
+					previousIndexEntries,
+				};
+				return {
+					task,
+					write,
+				};
+			});
 
-			const resolvedPreviousPath = isDraft
-				? await this.fs.resolveDraftFilePath(task.id)
-				: await getTaskPath(task.id, this);
-			const targetPath = await this.fs.getTaskWritePath(task, isDraft);
-			const targetContent = await this.readFileIfPresent(targetPath);
-			const previousPath = targetContent ? targetPath : resolvedPreviousPath;
-			const previousContent = targetContent ?? (await this.readFileIfPresent(resolvedPreviousPath));
-			const previousIndexEntries = mutationCommitMode.autoCommit
-				? await this.git.getIndexEntries(targetPath)
-				: undefined;
-			const filePath = await this.writePreparedTask(task, isDraft);
-			const createdContent = await readFile(filePath);
-			const write: CreatedTaskWrite = {
-				filePath,
-				createdContent,
-				previousPath,
-				previousContent,
-				previousIndexEntries,
-			};
-			return {
-				task,
-				write,
-			};
-		});
-
-		let savedTask: Task | null;
-		try {
-			savedTask = await this.finalizeCreatedTask(task, write.filePath, isDraft, mutationCommitMode.autoCommit, write);
-		} catch (error) {
-			let rollback: CreatedTaskRollbackResult;
+			let savedTask: Task | null;
 			try {
-				rollback = await this.rollbackCreatedTask(write);
-			} catch (rollbackError) {
-				const message = rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
-				throw new Error(`Task creation failed and cleanup also failed: ${message}`, { cause: error });
-			}
-			if (!rollback.workingPathRestored || !rollback.indexRestored) {
-				if (!rollback.indexRestored) {
+				savedTask = await this.finalizeCreatedTask(task, write.filePath, isDraft, mutationCommitMode.autoCommit, write);
+			} catch (error) {
+				let rollback: CreatedTaskRollbackResult;
+				try {
+					rollback = await this.rollbackCreatedTask(write);
+				} catch (rollbackError) {
+					const message = rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
+					throw new Error(`Task creation failed and cleanup also failed: ${message}`, { cause: error });
+				}
+				if (!rollback.workingPathRestored || !rollback.indexRestored) {
+					if (!rollback.indexRestored) {
+						throw new Error(
+							`Task creation failed, and Backlog no longer owned the staged entry for ${write.filePath}. The task file and staged Git state were preserved, ${task.id} remains in use, and manual Git review is required before retrying.`,
+							{ cause: error },
+						);
+					}
 					throw new Error(
-						`Task creation failed, and Backlog no longer owned the staged entry for ${write.filePath}. The task file and staged Git state were preserved, ${task.id} remains in use, and manual Git review is required before retrying.`,
+						`Task creation failed, and cleanup could not safely remove the changed file at ${write.filePath}. Your changes were preserved. Review or remove the preserved file before retrying because ${task.id} remains in use.`,
 						{ cause: error },
 					);
 				}
-				throw new Error(
-					`Task creation failed, and cleanup could not safely remove the changed file at ${write.filePath}. Your changes were preserved. Review or remove the preserved file before retrying because ${task.id} remains in use.`,
-					{ cause: error },
-				);
+				throw error;
 			}
-			throw error;
-		}
-
-		await this.publishGuardedTaskChanges(mutationCommitMode.guardedPublish);
-		return { task: savedTask ?? task, filePath: write.filePath };
+			if (!isDraft) markPublished?.();
+			return { task: savedTask ?? task, filePath: write.filePath };
+		};
+		return isDraft
+			? await run({ autoCommit: await this.shouldAutoCommit(autoCommit), guardedPublish: false })
+			: await this.withTaskMutationTransaction(autoCommit, run);
 	}
 
 	/**
@@ -1803,13 +1842,12 @@ export class Core {
 			const config = await this.fs.loadConfig();
 			task.status = config?.defaultStatus || FALLBACK_STATUS;
 		}
-
-		const mutationCommitMode = await this.getTaskMutationCommitMode(autoCommit);
-		const filepath = await this.writePreparedTask(task, false);
-		await this.finalizeCreatedTask(task, filepath, false, mutationCommitMode.autoCommit);
-		await this.publishGuardedTaskChanges(mutationCommitMode.guardedPublish);
-
-		return filepath;
+		return await this.withTaskMutationTransaction(autoCommit, async (mutationCommitMode, markPublished) => {
+			const filepath = await this.writePreparedTask(task, false);
+			await this.finalizeCreatedTask(task, filepath, false, mutationCommitMode.autoCommit);
+			markPublished();
+			return filepath;
+		});
 	}
 
 	private async persistTask(task: Task, autoCommit?: boolean): Promise<string> {
@@ -1848,10 +1886,11 @@ export class Core {
 	}
 
 	async updateTask(task: Task, autoCommit?: boolean): Promise<string> {
-		const mutationCommitMode = await this.getTaskMutationCommitMode(autoCommit);
-		const filePath = await this.persistTask(task, mutationCommitMode.autoCommit);
-		await this.publishGuardedTaskChanges(mutationCommitMode.guardedPublish);
-		return filePath;
+		return await this.withTaskMutationTransaction(autoCommit, async (mutationCommitMode, markPublished) => {
+			const filePath = await this.persistTask(task, mutationCommitMode.autoCommit);
+			markPublished();
+			return filePath;
+		});
 	}
 
 	private async applyTaskUpdateInput(
@@ -2435,44 +2474,45 @@ export class Core {
 		autoCommit?: boolean,
 		options: TaskReadOptions = {},
 	): Promise<Task> {
-		const mutationCommitMode = await this.getTaskMutationCommitMode(autoCommit);
-		const task = await this.loadTaskForMutation(taskId, options);
-		if (!task) {
-			throw new Error(`Task not found: ${taskId}`);
-		}
-
-		const requestedStatus = input.status?.trim().toLowerCase();
-		if (requestedStatus === "draft") {
-			// demoteTaskWithUpdates takes the task lock itself, so it must not be nested here.
-			const demoted = await this.demoteTaskWithUpdates(task, input, mutationCommitMode.autoCommit, options);
-			await this.publishGuardedTaskChanges(mutationCommitMode.guardedPublish);
-			return demoted;
-		}
-
-		let mutated = false;
-		// Fail fast when another process is mid-edit, and re-read inside the lock so the whole
-		// read-modify-write is protected. Locking only the write would still lose an update
-		// whenever one writer releases before the next acquires: the second would then apply
-		// its changes to a snapshot taken before the first wrote.
-		const updated = await this.fs.withTaskLock(task, async () => {
-			const current = await this.loadTaskForMutation(taskId, options);
-			if (!current) {
+		return await this.withTaskMutationTransaction(autoCommit, async (mutationCommitMode, markPublished) => {
+			const task = await this.loadTaskForMutation(taskId, options);
+			if (!task) {
 				throw new Error(`Task not found: ${taskId}`);
 			}
 
-			const result = await this.applyTaskUpdateInput(current, input, async (status) =>
-				this.requireCanonicalStatus(status),
-			);
-			mutated = result.mutated;
-			if (!mutated) {
-				return current;
+			const requestedStatus = input.status?.trim().toLowerCase();
+			if (requestedStatus === "draft") {
+				// demoteTaskWithUpdates takes the task lock itself, so it must not be nested here.
+				const demoted = await this.demoteTaskWithUpdates(task, input, mutationCommitMode.autoCommit, options);
+				markPublished();
+				return demoted;
 			}
 
-			await this.persistTask(current, mutationCommitMode.autoCommit);
-			return current;
+			let mutated = false;
+			// Fail fast when another process is mid-edit, and re-read inside the lock so the whole
+			// read-modify-write is protected. Locking only the write would still lose an update
+			// whenever one writer releases before the next acquires: the second would then apply
+			// its changes to a snapshot taken before the first wrote.
+			const updated = await this.fs.withTaskLock(task, async () => {
+				const current = await this.loadTaskForMutation(taskId, options);
+				if (!current) {
+					throw new Error(`Task not found: ${taskId}`);
+				}
+
+				const result = await this.applyTaskUpdateInput(current, input, async (status) =>
+					this.requireCanonicalStatus(status),
+				);
+				mutated = result.mutated;
+				if (!mutated) {
+					return current;
+				}
+
+				await this.persistTask(current, mutationCommitMode.autoCommit);
+				return current;
+			});
+			if (mutated) markPublished();
+			return updated;
 		});
-		if (mutated) await this.publishGuardedTaskChanges(mutationCommitMode.guardedPublish);
-		return updated;
 	}
 
 	async updateDraft(task: Task, autoCommit?: boolean): Promise<string> {
@@ -2735,22 +2775,23 @@ export class Core {
 		return filePaths;
 	}
 
-	async updateTasksBulk(
+	private async updateTasksBulkPrepared(
 		tasks: Task[],
-		commitMessage?: string,
-		autoCommit?: boolean,
-		preparedGuardedPublish = false,
-	): Promise<void> {
-		const mutationCommitMode = preparedGuardedPublish
-			? { autoCommit: true, guardedPublish: true }
-			: await this.getTaskMutationCommitMode(autoCommit);
+		commitMessage: string | undefined,
+		autoCommit: boolean,
+	): Promise<boolean> {
 		const filePaths = await this.fs.withTaskLocks(tasks, async () => await this.writeTasksBulk(tasks));
-
-		if (mutationCommitMode.autoCommit && filePaths.length > 0) {
+		if (autoCommit && filePaths.length > 0) {
 			await this.git.addFiles(filePaths);
 			await this.git.commitFiles(commitMessage || `Update ${tasks.length} tasks`, filePaths);
-			await this.publishGuardedTaskChanges(mutationCommitMode.guardedPublish);
 		}
+		return filePaths.length > 0;
+	}
+
+	async updateTasksBulk(tasks: Task[], commitMessage?: string, autoCommit?: boolean): Promise<void> {
+		await this.withTaskMutationTransaction(autoCommit, async (mutationCommitMode, markPublished) => {
+			if (await this.updateTasksBulkPrepared(tasks, commitMessage, mutationCommitMode.autoCommit)) markPublished();
+		});
 	}
 
 	async reorderTask(params: {
@@ -2781,147 +2822,137 @@ export class Core {
 			}
 			seen.add(id);
 		}
-		const mutationCommitMode = await this.getTaskMutationCommitMode(params.autoCommit);
+		return await this.withTaskMutationTransaction(params.autoCommit, async (mutationCommitMode, markPublished) => {
+			const store = await this.getContentStore();
+			await store.refreshTasks();
+			const loadedTasks = orderedTaskIds.map((id) => {
+				const resolution = store.resolveTaskForMutation(id);
+				if (resolution.status === "ambiguous") throw new AmbiguousTaskIdError(id, resolution.candidates);
+				return resolution.status === "found" ? resolution.task : null;
+			});
 
-		const store = await this.getContentStore();
-		await store.refreshTasks();
-		const loadedTasks = orderedTaskIds.map((id) => {
-			const resolution = store.resolveTaskForMutation(id);
-			if (resolution.status === "ambiguous") throw new AmbiguousTaskIdError(id, resolution.candidates);
-			return resolution.status === "found" ? resolution.task : null;
+			// Filter out any tasks that couldn't be loaded (may have been moved/deleted)
+			const validTasks = loadedTasks.filter((t): t is Task => t !== null);
+
+			// Verify the moved task itself exists
+			const movedTask = validTasks.find((t) => t.id === taskId);
+			if (!movedTask) {
+				throw new Error(`Task ${taskId} not found while reordering`);
+			}
+
+			// Reject reordering tasks from other branches - they can only be modified in their source branch
+			if (movedTask.branch) {
+				throw new Error(
+					`Task ${taskId} exists in branch "${movedTask.branch}" and cannot be reordered from the current branch. Switch to that branch to modify it.`,
+				);
+			}
+
+			const hasTargetMilestone = params.targetMilestone !== undefined;
+			const normalizedTargetMilestone =
+				params.targetMilestone === null
+					? undefined
+					: typeof params.targetMilestone === "string" && params.targetMilestone.trim().length > 0
+						? params.targetMilestone.trim()
+						: undefined;
+
+			// Calculate target index within the valid tasks list
+			const validOrderedIds = orderedTaskIds.filter((id) => validTasks.some((t) => t.id === id));
+			const targetIndex = validOrderedIds.indexOf(taskId);
+
+			if (targetIndex === -1) {
+				throw new Error("Implementation error: Task found in validTasks but index missing");
+			}
+
+			const previousTask = targetIndex > 0 ? validTasks[targetIndex - 1] : null;
+			const nextTask = targetIndex < validTasks.length - 1 ? validTasks[targetIndex + 1] : null;
+
+			const { ordinal: newOrdinal, requiresRebalance } = calculateNewOrdinal({
+				previous: previousTask,
+				next: nextTask,
+				defaultStep,
+			});
+
+			const updatedMoved: Task = {
+				...movedTask,
+				status: targetStatus,
+				...(hasTargetMilestone ? { milestone: normalizedTargetMilestone } : {}),
+				ordinal: newOrdinal,
+			};
+
+			const tasksInOrder: Task[] = validTasks.map((task, index) => (index === targetIndex ? updatedMoved : task));
+			const resolutionUpdates = resolveOrdinalConflicts(tasksInOrder, {
+				defaultStep,
+				startOrdinal: defaultStep,
+				forceSequential: requiresRebalance,
+			});
+
+			const updatesMap = new Map<string, Task>();
+			for (const update of resolutionUpdates) {
+				updatesMap.set(update.id, update);
+			}
+			if (!updatesMap.has(updatedMoved.id)) {
+				updatesMap.set(updatedMoved.id, updatedMoved);
+			}
+
+			const originalMap = new Map(validTasks.map((task) => [task.id, task]));
+			const changedTasks = Array.from(updatesMap.values()).filter((task) => {
+				const original = originalMap.get(task.id);
+				if (!original) return true;
+				return (
+					(original.ordinal ?? null) !== (task.ordinal ?? null) ||
+					(original.status ?? "") !== (task.status ?? "") ||
+					(original.milestone ?? "") !== (task.milestone ?? "")
+				);
+			});
+
+			if (changedTasks.length > 0) {
+				if (
+					await this.updateTasksBulkPrepared(
+						changedTasks,
+						params.commitMessage ?? `Reorder tasks in ${targetStatus}`,
+						mutationCommitMode.autoCommit,
+					)
+				) {
+					markPublished();
+				}
+			}
+
+			const updatedTask = updatesMap.get(taskId) ?? updatedMoved;
+			return { updatedTask, changedTasks };
 		});
-
-		// Filter out any tasks that couldn't be loaded (may have been moved/deleted)
-		const validTasks = loadedTasks.filter((t): t is Task => t !== null);
-
-		// Verify the moved task itself exists
-		const movedTask = validTasks.find((t) => t.id === taskId);
-		if (!movedTask) {
-			throw new Error(`Task ${taskId} not found while reordering`);
-		}
-
-		// Reject reordering tasks from other branches - they can only be modified in their source branch
-		if (movedTask.branch) {
-			throw new Error(
-				`Task ${taskId} exists in branch "${movedTask.branch}" and cannot be reordered from the current branch. Switch to that branch to modify it.`,
-			);
-		}
-
-		const hasTargetMilestone = params.targetMilestone !== undefined;
-		const normalizedTargetMilestone =
-			params.targetMilestone === null
-				? undefined
-				: typeof params.targetMilestone === "string" && params.targetMilestone.trim().length > 0
-					? params.targetMilestone.trim()
-					: undefined;
-
-		// Calculate target index within the valid tasks list
-		const validOrderedIds = orderedTaskIds.filter((id) => validTasks.some((t) => t.id === id));
-		const targetIndex = validOrderedIds.indexOf(taskId);
-
-		if (targetIndex === -1) {
-			throw new Error("Implementation error: Task found in validTasks but index missing");
-		}
-
-		const previousTask = targetIndex > 0 ? validTasks[targetIndex - 1] : null;
-		const nextTask = targetIndex < validTasks.length - 1 ? validTasks[targetIndex + 1] : null;
-
-		const { ordinal: newOrdinal, requiresRebalance } = calculateNewOrdinal({
-			previous: previousTask,
-			next: nextTask,
-			defaultStep,
-		});
-
-		const updatedMoved: Task = {
-			...movedTask,
-			status: targetStatus,
-			...(hasTargetMilestone ? { milestone: normalizedTargetMilestone } : {}),
-			ordinal: newOrdinal,
-		};
-
-		const tasksInOrder: Task[] = validTasks.map((task, index) => (index === targetIndex ? updatedMoved : task));
-		const resolutionUpdates = resolveOrdinalConflicts(tasksInOrder, {
-			defaultStep,
-			startOrdinal: defaultStep,
-			forceSequential: requiresRebalance,
-		});
-
-		const updatesMap = new Map<string, Task>();
-		for (const update of resolutionUpdates) {
-			updatesMap.set(update.id, update);
-		}
-		if (!updatesMap.has(updatedMoved.id)) {
-			updatesMap.set(updatedMoved.id, updatedMoved);
-		}
-
-		const originalMap = new Map(validTasks.map((task) => [task.id, task]));
-		const changedTasks = Array.from(updatesMap.values()).filter((task) => {
-			const original = originalMap.get(task.id);
-			if (!original) return true;
-			return (
-				(original.ordinal ?? null) !== (task.ordinal ?? null) ||
-				(original.status ?? "") !== (task.status ?? "") ||
-				(original.milestone ?? "") !== (task.milestone ?? "")
-			);
-		});
-
-		if (changedTasks.length > 0) {
-			await this.updateTasksBulk(
-				changedTasks,
-				params.commitMessage ?? `Reorder tasks in ${targetStatus}`,
-				mutationCommitMode.autoCommit,
-				mutationCommitMode.guardedPublish,
-			);
-		}
-
-		const updatedTask = updatesMap.get(taskId) ?? updatedMoved;
-		return { updatedTask, changedTasks };
 	}
 
 	async archiveTask(taskId: string, autoCommit?: boolean, options: TaskReadOptions = {}): Promise<boolean> {
-		const mutationCommitMode = await this.getTaskMutationCommitMode(autoCommit);
-		const taskToArchive = await this.loadTaskForMutation(taskId, options);
-		if (!taskToArchive) {
-			return false;
-		}
-		const normalizedTaskId = taskToArchive.id;
+		return await this.withTaskMutationTransaction(autoCommit, async (mutationCommitMode, markPublished) => {
+			const taskToArchive = await this.loadTaskForMutation(taskId, options);
+			if (!taskToArchive) return false;
+			const normalizedTaskId = taskToArchive.id;
+			const taskPath = taskToArchive.filePath ?? (await getTaskPath(normalizedTaskId, this));
+			const taskFilename = taskPath ? basename(taskPath) : null;
+			if (!taskPath || !taskFilename) return false;
 
-		// Get paths before moving the file
-		const taskPath = taskToArchive.filePath ?? (await getTaskPath(normalizedTaskId, this));
-		const taskFilename = taskPath ? basename(taskPath) : null;
-
-		if (!taskPath || !taskFilename) return false;
-
-		const fromPath = taskPath;
-		const toPath = join(await this.fs.getArchiveTasksDir(), taskFilename);
-
-		const activeTasks = (await this.fs.listTasks()).filter((task) => !taskIdsEqual(task.id, normalizedTaskId));
-		const sanitizedTasks = this.sanitizeArchivedTaskLinks(activeTasks, normalizedTaskId);
-
-		const archived = await this.fs.withTaskLocks([taskToArchive, ...sanitizedTasks], async () => {
-			try {
-				await moveFile(fromPath, toPath);
-			} catch {
-				return false;
-			}
-			this.contentStore?.transitionTask(normalizedTaskId);
-
-			const sanitizedPaths = sanitizedTasks.length > 0 ? await this.writeTasksBulk(sanitizedTasks) : [];
-
-			if (mutationCommitMode.autoCommit) {
-				// Stage the file move for proper Git tracking
-				const repoRoot = await this.git.stageFileMove(fromPath, toPath);
-				const commitPaths = [fromPath, toPath, ...sanitizedPaths];
-				for (const sanitizedPath of sanitizedPaths) {
-					await this.git.addFile(sanitizedPath);
+			const fromPath = taskPath;
+			const toPath = join(await this.fs.getArchiveTasksDir(), taskFilename);
+			const activeTasks = (await this.fs.listTasks()).filter((task) => !taskIdsEqual(task.id, normalizedTaskId));
+			const sanitizedTasks = this.sanitizeArchivedTaskLinks(activeTasks, normalizedTaskId);
+			return await this.fs.withTaskLocks([taskToArchive, ...sanitizedTasks], async () => {
+				try {
+					await moveFile(fromPath, toPath);
+				} catch {
+					return false;
 				}
-				await this.git.commitFiles(`backlog: Archive task ${normalizedTaskId}`, commitPaths, repoRoot);
-			}
-
-			return true;
+				this.contentStore?.transitionTask(normalizedTaskId);
+				const sanitizedPaths = sanitizedTasks.length > 0 ? await this.writeTasksBulk(sanitizedTasks) : [];
+				if (mutationCommitMode.autoCommit) {
+					const repoRoot = await this.git.stageFileMove(fromPath, toPath);
+					const commitPaths = [fromPath, toPath, ...sanitizedPaths];
+					for (const sanitizedPath of sanitizedPaths) await this.git.addFile(sanitizedPath);
+					await this.git.commitFiles(`backlog: Archive task ${normalizedTaskId}`, commitPaths, repoRoot);
+				}
+				markPublished();
+				return true;
+			});
 		});
-		if (archived) await this.publishGuardedTaskChanges(mutationCommitMode.guardedPublish);
-		return archived;
 	}
 
 	async archiveMilestone(
@@ -3002,34 +3033,28 @@ export class Core {
 	}
 
 	async completeTask(taskId: string, autoCommit?: boolean, options: TaskReadOptions = {}): Promise<boolean> {
-		const mutationCommitMode = await this.getTaskMutationCommitMode(autoCommit);
-		const task = await this.loadTaskForMutation(taskId, options);
-		if (!task) return false;
-		// Get paths before moving the file
-		const completedDir = this.fs.completedDir;
-		const taskPath = task.filePath ?? (await getTaskPath(task.id, this));
-		const taskFilename = taskPath ? basename(taskPath) : null;
+		return await this.withTaskMutationTransaction(autoCommit, async (mutationCommitMode, markPublished) => {
+			const task = await this.loadTaskForMutation(taskId, options);
+			if (!task) return false;
+			const taskPath = task.filePath ?? (await getTaskPath(task.id, this));
+			const taskFilename = taskPath ? basename(taskPath) : null;
+			if (!taskPath || !taskFilename) return false;
 
-		if (!taskPath || !taskFilename) return false;
-
-		const fromPath = taskPath;
-		const toPath = join(completedDir, taskFilename);
-
-		try {
-			await moveFile(fromPath, toPath);
-		} catch {
-			return false;
-		}
-		this.contentStore?.transitionTask(task.id, { ...task, filePath: toPath, source: "completed" });
-
-		if (mutationCommitMode.autoCommit) {
-			// Stage the file move for proper Git tracking
-			const repoRoot = await this.git.stageFileMove(fromPath, toPath);
-			await this.git.commitFiles(`backlog: Complete task ${task.id}`, [fromPath, toPath], repoRoot);
-		}
-
-		await this.publishGuardedTaskChanges(mutationCommitMode.guardedPublish);
-		return true;
+			const fromPath = taskPath;
+			const toPath = join(this.fs.completedDir, taskFilename);
+			try {
+				await moveFile(fromPath, toPath);
+			} catch {
+				return false;
+			}
+			this.contentStore?.transitionTask(task.id, { ...task, filePath: toPath, source: "completed" });
+			if (mutationCommitMode.autoCommit) {
+				const repoRoot = await this.git.stageFileMove(fromPath, toPath);
+				await this.git.commitFiles(`backlog: Complete task ${task.id}`, [fromPath, toPath], repoRoot);
+			}
+			markPublished();
+			return true;
+		});
 	}
 
 	async getTerminalStatusTasksByAge(olderThanDays: number): Promise<Task[]> {
@@ -3068,143 +3093,156 @@ export class Core {
 		return moved !== null;
 	}
 	async promoteDraft(draftId: string, autoCommit?: boolean): Promise<boolean> {
-		const mutationCommitMode = await this.getTaskMutationCommitMode(autoCommit);
-		// Whole-file operation: filename binding decides which file is promoted, so resolution
-		// goes through the file resolver and frontmatter equivalence is not required.
-		const sourcePath = await this.fs.resolveDraftFilePath(draftId);
-		if (!sourcePath) return false;
-		const canonicalId = extractDraftIdFromFilename(basename(sourcePath));
-		if (!canonicalId) return false;
+		return await this.withTaskMutationTransaction(autoCommit, async (mutationCommitMode, markPublished) => {
+			// Whole-file operation: filename binding decides which file is promoted, so resolution
+			// goes through the file resolver and frontmatter equivalence is not required.
+			const sourcePath = await this.fs.resolveDraftFilePath(draftId);
+			if (!sourcePath) return false;
+			const canonicalId = extractDraftIdFromFilename(basename(sourcePath));
+			if (!canonicalId) return false;
 
-		// Hold the draft lock across the read-unlink span so a concurrent edit cannot be omitted
-		// from the promoted task or leave both records on disk. Draft lock first, create lock
-		// second: nothing acquires them in the opposite order, so this cannot deadlock.
-		const moved = await this.fs.withDraftLock({ filePath: sourcePath, canonicalId }, async () => {
-			try {
-				return await this.withCreateLock(async () => {
-					const draft = await this.fs.loadDraftFromFile(sourcePath);
-					if (!draft) return null;
+			// Hold the draft lock across the read-unlink span so a concurrent edit cannot be omitted
+			// from the promoted task or leave both records on disk. Draft lock first, create lock
+			// second: nothing acquires them in the opposite order, so this cannot deadlock.
+			const moved = await this.fs.withDraftLock({ filePath: sourcePath, canonicalId }, async () => {
+				try {
+					return await this.withCreateLock(async () => {
+						const draft = await this.fs.loadDraftFromFile(sourcePath);
+						if (!draft) return null;
 
-					const config = await this.fs.loadConfig();
-					const newTaskId = await this.generateNextId(EntityType.Task, draft.parentTaskId);
-					const promotedStatus =
-						!draft.status || draft.status.trim().toLowerCase() === "draft"
-							? config?.defaultStatus || FALLBACK_STATUS
-							: draft.status;
+						const config = await this.fs.loadConfig();
+						const newTaskId = await this.generateNextId(EntityType.Task, draft.parentTaskId);
+						const promotedStatus =
+							!draft.status || draft.status.trim().toLowerCase() === "draft"
+								? config?.defaultStatus || FALLBACK_STATUS
+								: draft.status;
 
-					const promotedTask: Task = {
-						...draft,
-						id: newTaskId,
-						status: promotedStatus,
-						filePath: undefined,
-					};
+						const promotedTask: Task = {
+							...draft,
+							id: newTaskId,
+							status: promotedStatus,
+							filePath: undefined,
+						};
 
-					normalizeAssignee(promotedTask);
-					const savedPath = await this.fs.saveTask(promotedTask);
-					await unlink(sourcePath);
+						normalizeAssignee(promotedTask);
+						const savedPath = await this.fs.saveTask(promotedTask);
+						await unlink(sourcePath);
 
-					const savedTask = await this.fs.loadTask(promotedTask.id);
-					if (this.contentStore && savedTask) {
-						this.contentStore.upsertTask(savedTask);
+						const savedTask = await this.fs.loadTask(promotedTask.id);
+						if (this.contentStore && savedTask) {
+							this.contentStore.upsertTask(savedTask);
+						}
+
+						return { previousPath: sourcePath, savedPath };
+					});
+				} catch (error) {
+					// A missing draft is the only thing "false" may mean here; a config value Backlog refuses to
+					// read must not be reported as a draft that does not exist.
+					if (isCreateLockError(error) || isConfigValueError(error)) {
+						throw error;
 					}
-
-					return { previousPath: sourcePath, savedPath };
-				});
-			} catch (error) {
-				// A missing draft is the only thing "false" may mean here; a config value Backlog refuses to
-				// read must not be reported as a draft that does not exist.
-				if (isCreateLockError(error) || isConfigValueError(error)) {
-					throw error;
+					return null;
 				}
-				return null;
-			}
-		});
+			});
 
-		if (!moved) return false;
-		if (mutationCommitMode.autoCommit) {
-			await this.commitWrittenFile(
-				`backlog: Promote draft ${normalizeId(draftId, "draft")}`,
-				[moved.previousPath],
-				moved.savedPath,
-			);
-		}
-		await this.publishGuardedTaskChanges(mutationCommitMode.guardedPublish);
-		return true;
+			if (!moved) return false;
+			if (mutationCommitMode.autoCommit) {
+				await this.commitWrittenFile(
+					`backlog: Promote draft ${normalizeId(draftId, "draft")}`,
+					[moved.previousPath],
+					moved.savedPath,
+				);
+			}
+			markPublished();
+			return true;
+		});
 	}
 	async demoteTask(taskId: string, autoCommit?: boolean, options: TaskReadOptions = {}): Promise<boolean> {
-		const mutationCommitMode = await this.getTaskMutationCommitMode(autoCommit);
-		const task = await this.loadTaskForMutation(taskId, options);
-		if (!task) return false;
-		// Direct demotion is a read-modify-write too. Hold the task lock across the
-		// filesystem read and move so an in-flight task update cannot recreate the
-		// active file after this operation has written the draft.
-		const demotion = {
-			success: false,
-			moved: undefined as { previousPath: string; savedPath: string } | undefined,
-		};
-		let result: typeof demotion;
-		try {
-			result = await this.fs.withTaskLock(task, async () => {
-				const movedPaths: Array<{ previousPath: string; savedPath: string }> = [];
-				const success = await this.fs.demoteTask(task.id, (previousPath, savedPath) => {
-					movedPaths.push({ previousPath, savedPath });
-				});
-				if (success) {
-					this.contentStore?.transitionTask(task.id);
-				}
-				demotion.success = success;
-				demotion.moved = movedPaths[0];
-				return demotion;
-			});
-		} catch (error) {
-			// The lock wrapper can fail while releasing after the move completed. Keep
-			// the mutation outcome visible to the Web API and other clients.
-			if (demotion.success && demotion.moved) {
-				const failure = error instanceof Error ? error : new Error(String(error));
-				(failure as Error & { demotionState?: string }).demotionState = "moved";
-				throw failure;
-			}
-			throw error;
-		}
-		const { success, moved } = result;
-
-		if (success && moved) {
+		return await this.withTaskMutationTransaction(autoCommit, async (mutationCommitMode, markPublished) => {
+			const task = await this.loadTaskForMutation(taskId, options);
+			if (!task) return false;
+			// Direct demotion is a read-modify-write too. Hold the task lock across the
+			// filesystem read and move so an in-flight task update cannot recreate the
+			// active file after this operation has written the draft.
+			const demotion = {
+				success: false,
+				moved: undefined as { previousPath: string; savedPath: string } | undefined,
+			};
+			let result: typeof demotion;
 			try {
-				if (mutationCommitMode.autoCommit) {
-					await this.commitWrittenFile(`backlog: Demote task ${task.id}`, [moved.previousPath], moved.savedPath);
-				}
+				result = await this.fs.withTaskLock(task, async () => {
+					const movedPaths: Array<{ previousPath: string; savedPath: string }> = [];
+					const success = await this.fs.demoteTask(task.id, (previousPath, savedPath) => {
+						movedPaths.push({ previousPath, savedPath });
+					});
+					if (success) {
+						this.contentStore?.transitionTask(task.id);
+					}
+					demotion.success = success;
+					demotion.moved = movedPaths[0];
+					return demotion;
+				});
 			} catch (error) {
-				const failure = error instanceof Error ? error : new Error(String(error));
-				(failure as Error & { demotionState?: string }).demotionState = "moved";
-				throw failure;
+				// The lock wrapper can fail while releasing after the move completed. Keep
+				// the mutation outcome visible to the Web API and other clients.
+				if (demotion.success && demotion.moved) {
+					const failure = error instanceof Error ? error : new Error(String(error));
+					(failure as Error & { demotionState?: string }).demotionState = "moved";
+					throw failure;
+				}
+				throw error;
 			}
-			await this.publishGuardedTaskChanges(mutationCommitMode.guardedPublish);
-		}
+			const { success, moved } = result;
 
-		return success;
+			if (success && moved) {
+				try {
+					if (mutationCommitMode.autoCommit) {
+						await this.commitWrittenFile(`backlog: Demote task ${task.id}`, [moved.previousPath], moved.savedPath);
+					}
+				} catch (error) {
+					const failure = error instanceof Error ? error : new Error(String(error));
+					(failure as Error & { demotionState?: string }).demotionState = "moved";
+					throw failure;
+				}
+			}
+
+			if (success && moved) markPublished();
+			return success;
+		});
 	}
 
 	/**
 	 * Add acceptance criteria to a task
 	 */
 	async addAcceptanceCriteria(taskId: string, criteria: string[], autoCommit?: boolean): Promise<void> {
-		const task = await this.fs.loadTask(taskId);
-		if (!task) {
-			throw new Error(`Task not found: ${taskId}`);
-		}
+		return await this.withTaskMutationTransaction(autoCommit, async (mutationCommitMode, markPublished) => {
+			const task = await this.fs.loadTask(taskId);
+			if (!task) {
+				throw new Error(`Task not found: ${taskId}`);
+			}
 
-		// Get existing criteria or initialize empty array
-		const current = Array.isArray(task.acceptanceCriteriaItems) ? [...task.acceptanceCriteriaItems] : [];
+			await this.fs.withTaskLock(task, async () => {
+				const currentTask = await this.fs.loadTask(taskId);
+				if (!currentTask) {
+					throw new Error(`Task not found: ${taskId}`);
+				}
 
-		// Calculate next index (1-based)
-		let nextIndex = current.length > 0 ? Math.max(...current.map((c) => c.index)) + 1 : 1;
+				// Get existing criteria or initialize empty array
+				const current = Array.isArray(currentTask.acceptanceCriteriaItems)
+					? [...currentTask.acceptanceCriteriaItems]
+					: [];
 
-		// Append new criteria
-		const newCriteria = criteria.map((text) => ({ index: nextIndex++, text, checked: false }));
-		task.acceptanceCriteriaItems = [...current, ...newCriteria];
+				// Calculate next index (1-based)
+				let nextIndex = current.length > 0 ? Math.max(...current.map((c) => c.index)) + 1 : 1;
 
-		// Save the task
-		await this.updateTask(task, autoCommit);
+				// Append new criteria
+				const newCriteria = criteria.map((text) => ({ index: nextIndex++, text, checked: false }));
+				currentTask.acceptanceCriteriaItems = [...current, ...newCriteria];
+
+				await this.persistTask(currentTask, mutationCommitMode.autoCommit);
+			});
+			markPublished();
+		});
 	}
 
 	/**
@@ -3212,37 +3250,46 @@ export class Core {
 	 * @returns Array of removed indices
 	 */
 	async removeAcceptanceCriteria(taskId: string, indices: number[], autoCommit?: boolean): Promise<number[]> {
-		const task = await this.fs.loadTask(taskId);
-		if (!task) {
-			throw new Error(`Task not found: ${taskId}`);
-		}
-
-		let list = Array.isArray(task.acceptanceCriteriaItems) ? [...task.acceptanceCriteriaItems] : [];
-		const removed: number[] = [];
-
-		// Sort indices in descending order to avoid index shifting issues
-		const sortedIndices = [...indices].sort((a, b) => b - a);
-
-		for (const idx of sortedIndices) {
-			const before = list.length;
-			list = list.filter((c) => c.index !== idx);
-			if (list.length < before) {
-				removed.push(idx);
+		return await this.withTaskMutationTransaction(autoCommit, async (mutationCommitMode, markPublished) => {
+			const task = await this.fs.loadTask(taskId);
+			if (!task) {
+				throw new Error(`Task not found: ${taskId}`);
 			}
-		}
 
-		if (removed.length === 0) {
-			throw new Error("No criteria were removed. Check that the specified indices exist.");
-		}
+			const removed = await this.fs.withTaskLock(task, async () => {
+				const currentTask = await this.fs.loadTask(taskId);
+				if (!currentTask) {
+					throw new Error(`Task not found: ${taskId}`);
+				}
 
-		// Re-index remaining items (1-based)
-		list = list.map((c, i) => ({ ...c, index: i + 1 }));
-		task.acceptanceCriteriaItems = list;
+				let list = Array.isArray(currentTask.acceptanceCriteriaItems) ? [...currentTask.acceptanceCriteriaItems] : [];
+				const removed: number[] = [];
 
-		// Save the task
-		await this.updateTask(task, autoCommit);
+				// Sort indices in descending order to avoid index shifting issues
+				const sortedIndices = [...indices].sort((a, b) => b - a);
 
-		return removed.sort((a, b) => a - b); // Return in ascending order
+				for (const idx of sortedIndices) {
+					const before = list.length;
+					list = list.filter((c) => c.index !== idx);
+					if (list.length < before) {
+						removed.push(idx);
+					}
+				}
+
+				if (removed.length === 0) {
+					throw new Error("No criteria were removed. Check that the specified indices exist.");
+				}
+
+				// Re-index remaining items (1-based)
+				list = list.map((c, i) => ({ ...c, index: i + 1 }));
+				currentTask.acceptanceCriteriaItems = list;
+
+				await this.persistTask(currentTask, mutationCommitMode.autoCommit);
+				return removed.sort((a, b) => a - b); // Return in ascending order
+			});
+			markPublished();
+			return removed;
+		});
 	}
 
 	/**
@@ -3256,37 +3303,46 @@ export class Core {
 		checked: boolean,
 		autoCommit?: boolean,
 	): Promise<number[]> {
-		const task = await this.fs.loadTask(taskId);
-		if (!task) {
-			throw new Error(`Task not found: ${taskId}`);
-		}
-
-		let list = Array.isArray(task.acceptanceCriteriaItems) ? [...task.acceptanceCriteriaItems] : [];
-		const updated: number[] = [];
-
-		// Filter to only valid indices and update them
-		for (const idx of indices) {
-			if (list.some((c) => c.index === idx)) {
-				list = list.map((c) => {
-					if (c.index === idx) {
-						updated.push(idx);
-						return { ...c, checked };
-					}
-					return c;
-				});
+		return await this.withTaskMutationTransaction(autoCommit, async (mutationCommitMode, markPublished) => {
+			const task = await this.fs.loadTask(taskId);
+			if (!task) {
+				throw new Error(`Task not found: ${taskId}`);
 			}
-		}
 
-		if (updated.length === 0) {
-			throw new Error("No criteria were updated.");
-		}
+			const updated = await this.fs.withTaskLock(task, async () => {
+				const currentTask = await this.fs.loadTask(taskId);
+				if (!currentTask) {
+					throw new Error(`Task not found: ${taskId}`);
+				}
 
-		task.acceptanceCriteriaItems = list;
+				let list = Array.isArray(currentTask.acceptanceCriteriaItems) ? [...currentTask.acceptanceCriteriaItems] : [];
+				const updated: number[] = [];
 
-		// Save the task
-		await this.updateTask(task, autoCommit);
+				// Filter to only valid indices and update them
+				for (const idx of indices) {
+					if (list.some((c) => c.index === idx)) {
+						list = list.map((c) => {
+							if (c.index === idx) {
+								updated.push(idx);
+								return { ...c, checked };
+							}
+							return c;
+						});
+					}
+				}
 
-		return updated.sort((a, b) => a - b);
+				if (updated.length === 0) {
+					throw new Error("No criteria were updated.");
+				}
+
+				currentTask.acceptanceCriteriaItems = list;
+
+				await this.persistTask(currentTask, mutationCommitMode.autoCommit);
+				return updated.sort((a, b) => a - b);
+			});
+			markPublished();
+			return updated;
+		});
 	}
 
 	/**

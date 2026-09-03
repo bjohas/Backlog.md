@@ -4,7 +4,7 @@ import Navigation from './Navigation';
 import { HealthIndicator, HealthSuccessToast } from './HealthIndicator';
 import { DuplicateIdWarning } from './DuplicateIdWarning';
 import type { DuplicateRepairPlan } from '../../core/duplicate-task-repair';
-import { type Task, type Document, type Decision } from '../../types';
+import { type Task, type Document, type Decision, type GuardedTaskSyncResult } from '../../types';
 
 interface LayoutProps {
 	projectName: string;
@@ -18,7 +18,9 @@ interface LayoutProps {
 	error?: Error | null;
 	onRefreshData: () => Promise<void>;
 	onSync: () => Promise<void>;
-	syncMessage?: string | null;
+	syncResult?: GuardedTaskSyncResult | null;
+	syncError?: string | null;
+	isSyncPending?: boolean;
 	duplicateRepairPlan?: DuplicateRepairPlan | null;
 }
 
@@ -34,7 +36,9 @@ export default function Layout({
 	error,
 	onRefreshData,
 	onSync,
-	syncMessage,
+	syncResult,
+	syncError,
+	isSyncPending,
 	duplicateRepairPlan = null,
 }: LayoutProps) {
 	return (
@@ -51,7 +55,13 @@ export default function Layout({
 				onRefreshData={onRefreshData}
 			/>
 			<div className="flex-1 flex flex-col min-h-0 min-w-0">
-				<Navigation projectName={projectName} onSync={onSync} syncMessage={syncMessage} />
+				<Navigation
+					projectName={projectName}
+					onSync={onSync}
+					syncResult={syncResult}
+					syncError={syncError}
+					isSyncPending={isSyncPending}
+				/>
 				<DuplicateIdWarning plan={duplicateRepairPlan} onRepaired={onRefreshData} />
 				<main className="flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden">
 					<Outlet context={{ tasks, docs, decisions, isLoading, onRefreshData }} />

@@ -297,6 +297,26 @@ export type SearchResult = TaskSearchResult | DocumentSearchResult | DecisionSea
  * Allows customization of task prefix (e.g., "JIRA-", "issue-", "bug-").
  * Note: Draft prefix is always "draft" and not configurable.
  */
+export type GuardedTaskSyncStatus =
+	| "disabled"
+	| "not-repository"
+	| "no-upstream"
+	| "up-to-date"
+	| "fast-forwarded"
+	| "local-changes"
+	| "ahead"
+	| "diverged"
+	| "checkout-changed"
+	| "busy"
+	| "failed";
+
+export interface GuardedTaskSyncResult {
+	status: GuardedTaskSyncStatus;
+	message: string;
+	branch?: string;
+	upstream?: string;
+}
+
 export interface PrefixConfig {
 	/** Prefix for task IDs (default: "task") - produces IDs like TASK-1, TASK-2 */
 	task: string;
@@ -342,12 +362,14 @@ export interface BacklogConfig {
 	autoCommit?: boolean;
 	/**
 	 * Before interactive views refresh their working branch, require a clean
-	 * checkout and permit only a fast-forward update from its upstream.
+	 * checkout and permit only a fast-forward update from its upstream. This
+	 * preference remains independent from guardedTaskPublish.
 	 */
 	guardedTaskSync?: boolean;
 	/**
 	 * Before publishing a task mutation, require a clean checkout synchronized
-	 * with its upstream; then commit and push the task files.
+	 * with its upstream; then commit and push the task files. While enabled, it
+	 * also enables guarded synchronization without changing guardedTaskSync.
 	 */
 	guardedTaskPublish?: boolean;
 	/** Write local JSONL records for every Backlog.md-initiated Git command. */
@@ -384,6 +406,12 @@ export interface BacklogConfig {
 			allowedOrigins?: string[];
 		};
 	};
+}
+
+export function isGuardedTaskSyncEnabled(
+	config: Pick<BacklogConfig, "guardedTaskSync" | "guardedTaskPublish"> | null | undefined,
+): boolean {
+	return config?.guardedTaskSync === true || config?.guardedTaskPublish === true;
 }
 
 export interface ParsedMarkdown {

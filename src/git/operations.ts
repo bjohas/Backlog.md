@@ -3,12 +3,29 @@ import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { $ } from "bun";
 import { DEFAULT_DIRECTORIES } from "../constants/index.ts";
-import type { BacklogConfig } from "../types/index.ts";
+import { type BacklogConfig, type GuardedTaskSyncResult, isGuardedTaskSyncEnabled } from "../types/index.ts";
 import { normalizeProjectBacklogDirectory } from "../utils/backlog-directory.ts";
 
 type GitPathContext = {
 	repoRoot: string;
 	relativePath: string;
+};
+
+type CurrentBranchUpstream = {
+	branch: string;
+	mergeRef: string;
+	ref: string;
+	remote: string;
+};
+
+type CheckoutIdentity = CurrentBranchUpstream & {
+	head: string | null;
+};
+
+type GuardedFastForwardInspection = {
+	result: GuardedTaskSyncResult;
+	upstream?: CurrentBranchUpstream;
+	pinnedUpstream?: string;
 };
 
 type GitConfigLoader = () => Promise<BacklogConfig | null>;
@@ -25,24 +42,6 @@ export interface GitIndexEntry {
 	mode: string;
 	objectId: string;
 	stage: number;
-}
-
-export type GuardedTaskSyncStatus =
-	| "disabled"
-	| "not-repository"
-	| "no-upstream"
-	| "up-to-date"
-	| "fast-forwarded"
-	| "local-changes"
-	| "ahead"
-	| "diverged"
-	| "failed";
-
-export interface GuardedTaskSyncResult {
-	status: GuardedTaskSyncStatus;
-	message: string;
-	branch?: string;
-	upstream?: string;
 }
 
 function indexEntriesEqual(left: readonly GitIndexEntry[], right: readonly GitIndexEntry[]): boolean {
@@ -561,7 +560,7 @@ export class GitOperations {
 	 */
 	async syncCurrentBranch(): Promise<GuardedTaskSyncResult> {
 		await this.loadConfigIfNeeded();
-		if (this.config?.guardedTaskSync !== true) {
+		if (!isGuardedTaskSyncEnabled(this.config)) {
 			return { status: "disabled", message: "Guarded task sync is disabled." };
 		}
 		if (this.config?.filesystemOnly || this.config?.remoteOperations === false) {
@@ -584,77 +583,193 @@ export class GitOperations {
 	}
 
 	private async syncCurrentBranchOnce(): Promise<GuardedTaskSyncResult> {
-		let upstream: { branch: string; ref: string; remote: string };
+		return (await this.inspectGuardedTaskFastForward()).result;
+	}
+
+	/**
+	 * Inspect and, when safe, fast-forward the current checkout using the exact
+	 * upstream commit fetched during this operation. The checkout identity is
+	 * sampled on both sides of the fetch and immediately before the merge so a
+	 * changed branch, tracking configuration, remote, or HEAD cannot be merged.
+	 */
+	private async inspectGuardedTaskFastForward(): Promise<GuardedFastForwardInspection> {
+		let beforeFetch: CheckoutIdentity;
 		try {
-			upstream = await this.getCurrentBranchUpstream();
+			beforeFetch = await this.getCheckoutIdentity();
 		} catch (error) {
 			return {
-				status: "no-upstream",
-				message: error instanceof Error ? error.message : "The current branch has no upstream.",
+				result: {
+					status: "no-upstream",
+					message: error instanceof Error ? error.message : "The current branch has no upstream.",
+				},
 			};
 		}
 
 		try {
-			await this.fetchRequired(upstream.remote);
-			const [head, upstreamHead] = await Promise.all([this.resolveCommit("HEAD"), this.resolveCommit(upstream.ref)]);
-			if (!head || !upstreamHead) {
+			await this.fetchRequired(beforeFetch.remote);
+			const afterFetch = await this.getCheckoutIdentity();
+			if (!this.checkoutIdentitiesEqual(beforeFetch, afterFetch)) {
+				return { result: this.checkoutChangedResult(beforeFetch) };
+			}
+
+			const pinnedUpstream = await this.resolveCommit(afterFetch.ref);
+			if (!afterFetch.head || !pinnedUpstream) {
 				return {
-					status: "failed",
-					message: `Could not resolve ${upstream.branch} or ${upstream.ref} after fetching.`,
-					branch: upstream.branch,
-					upstream: upstream.ref,
+					result: {
+						status: "failed",
+						message: `Could not resolve ${afterFetch.branch} or ${afterFetch.ref} after fetching.`,
+						branch: afterFetch.branch,
+						upstream: afterFetch.ref,
+					},
+					upstream: afterFetch,
 				};
 			}
-			if (head === upstreamHead) {
+			if (afterFetch.head === pinnedUpstream) {
 				return {
-					status: "up-to-date",
-					message: `${upstream.branch} is up to date.`,
-					branch: upstream.branch,
-					upstream: upstream.ref,
+					result: {
+						status: "up-to-date",
+						message: `${afterFetch.branch} is up to date.`,
+						branch: afterFetch.branch,
+						upstream: afterFetch.ref,
+					},
+					upstream: afterFetch,
+					pinnedUpstream,
 				};
 			}
 			if (!(await this.isClean())) {
 				return {
-					status: "local-changes",
-					message: "Local changes prevent syncing. Commit, stash, or discard them before syncing.",
-					branch: upstream.branch,
-					upstream: upstream.ref,
+					result: this.localChangesResult(afterFetch),
+					upstream: afterFetch,
+					pinnedUpstream,
 				};
 			}
 
-			const { stdout: mergeBaseOutput } = await this.execGit(["merge-base", head, upstreamHead], { readOnly: true });
+			const { stdout: mergeBaseOutput } = await this.execGit(["merge-base", afterFetch.head, pinnedUpstream], {
+				readOnly: true,
+				acceptedExitCodes: [1],
+			});
 			const mergeBase = mergeBaseOutput.trim();
-			if (mergeBase === head) {
-				await this.execGit(["merge", "--ff-only", upstream.ref]);
+			if (!mergeBase) {
 				return {
-					status: "fast-forwarded",
-					message: `Fast-forwarded ${upstream.branch} from ${upstream.ref}.`,
-					branch: upstream.branch,
-					upstream: upstream.ref,
+					result: {
+						status: "diverged",
+						message: `${afterFetch.branch} has no common history with ${afterFetch.ref}; reconcile it manually.`,
+						branch: afterFetch.branch,
+						upstream: afterFetch.ref,
+					},
+					upstream: afterFetch,
+					pinnedUpstream,
 				};
 			}
-			if (mergeBase === upstreamHead) {
+			if (mergeBase === pinnedUpstream) {
 				return {
-					status: "ahead",
-					message: `${upstream.branch} has local commits that have not been pushed.`,
-					branch: upstream.branch,
-					upstream: upstream.ref,
+					result: {
+						status: "ahead",
+						message: `${afterFetch.branch} has local commits that have not been pushed.`,
+						branch: afterFetch.branch,
+						upstream: afterFetch.ref,
+					},
+					upstream: afterFetch,
+					pinnedUpstream,
+				};
+			}
+			if (mergeBase !== afterFetch.head) {
+				return {
+					result: {
+						status: "diverged",
+						message: `${afterFetch.branch} diverged from ${afterFetch.ref}; reconcile it manually.`,
+						branch: afterFetch.branch,
+						upstream: afterFetch.ref,
+					},
+					upstream: afterFetch,
+					pinnedUpstream,
+				};
+			}
+			if (!(await this.isClean())) {
+				return {
+					result: this.localChangesResult(afterFetch),
+					upstream: afterFetch,
+					pinnedUpstream,
+				};
+			}
+
+			const beforeMerge = await this.getCheckoutIdentity();
+			if (!this.checkoutIdentitiesEqual(afterFetch, beforeMerge)) {
+				return {
+					result: this.checkoutChangedResult(afterFetch),
+					upstream: afterFetch,
+					pinnedUpstream,
+				};
+			}
+			await this.execGit(["merge", "--ff-only", pinnedUpstream]);
+
+			const finalHead = await this.resolveCommit("HEAD");
+			if (finalHead !== pinnedUpstream) {
+				return {
+					result: {
+						status: "failed",
+						message: `Fast-forward of ${afterFetch.branch} did not reach ${afterFetch.ref}.`,
+						branch: afterFetch.branch,
+						upstream: afterFetch.ref,
+					},
+					upstream: afterFetch,
+					pinnedUpstream,
 				};
 			}
 			return {
-				status: "diverged",
-				message: `${upstream.branch} diverged from ${upstream.ref}; reconcile it manually.`,
-				branch: upstream.branch,
-				upstream: upstream.ref,
+				result: {
+					status: "fast-forwarded",
+					message: `Fast-forwarded ${afterFetch.branch} from ${afterFetch.ref}.`,
+					branch: afterFetch.branch,
+					upstream: afterFetch.ref,
+				},
+				upstream: afterFetch,
+				pinnedUpstream,
 			};
 		} catch (error) {
 			return {
-				status: "failed",
-				message: error instanceof Error ? error.message : "Could not synchronize the current branch.",
-				branch: upstream.branch,
-				upstream: upstream.ref,
+				result: {
+					status: "failed",
+					message: error instanceof Error ? error.message : "Could not synchronize the current branch.",
+					branch: beforeFetch.branch,
+					upstream: beforeFetch.ref,
+				},
+				upstream: beforeFetch,
 			};
 		}
+	}
+
+	private async getCheckoutIdentity(): Promise<CheckoutIdentity> {
+		const [upstream, head] = await Promise.all([this.getCurrentBranchUpstream(), this.resolveCommit("HEAD")]);
+		return { ...upstream, head };
+	}
+
+	private checkoutIdentitiesEqual(left: CheckoutIdentity, right: CheckoutIdentity): boolean {
+		return (
+			left.branch === right.branch &&
+			left.remote === right.remote &&
+			left.mergeRef === right.mergeRef &&
+			left.ref === right.ref &&
+			left.head === right.head
+		);
+	}
+
+	private checkoutChangedResult(identity: CheckoutIdentity): GuardedTaskSyncResult {
+		return {
+			status: "checkout-changed",
+			message: "The checked-out branch changed during synchronization; retry after it is stable.",
+			branch: identity.branch,
+			upstream: identity.ref,
+		};
+	}
+
+	private localChangesResult(identity: CheckoutIdentity): GuardedTaskSyncResult {
+		return {
+			status: "local-changes",
+			message: "Local changes prevent syncing. Commit, stash, or discard them before syncing.",
+			branch: identity.branch,
+			upstream: identity.ref,
+		};
 	}
 
 	/**
@@ -672,34 +787,34 @@ export class GitOperations {
 			throw new Error("Guarded task publishing requires a clean worktree and index.");
 		}
 
-		const upstream = await this.getCurrentBranchUpstream();
-		await this.fetchRequired(upstream.remote);
-
-		try {
-			await this.execGit(["merge", "--ff-only", upstream.ref]);
-		} catch {
-			throw new Error(
-				`Guarded task publishing cannot fast-forward ${upstream.branch} from ${upstream.ref}; reconcile the branch manually.`,
-			);
-		}
-
-		const [head, upstreamHead] = await Promise.all([this.resolveCommit("HEAD"), this.resolveCommit(upstream.ref)]);
-		if (!head || !upstreamHead) {
-			throw new Error(
-				`Guarded task publishing requires ${upstream.branch} to match ${upstream.ref}; publish or reconcile local commits first.`,
-			);
-		}
-		if (head === upstreamHead) {
+		const inspection = await this.inspectGuardedTaskFastForward();
+		const { result, upstream, pinnedUpstream } = inspection;
+		if (result.status === "up-to-date" || result.status === "fast-forwarded") {
 			return;
+		}
+		if (result.status === "local-changes") {
+			throw new Error("Guarded task publishing requires a clean worktree and index.");
+		}
+		if (result.status === "checkout-changed") {
+			throw new Error("Guarded task publishing stopped because the checked-out branch changed during synchronization.");
+		}
+		if (!upstream || !pinnedUpstream || result.status === "no-upstream" || result.status === "failed") {
+			throw new Error(result.message);
 		}
 		// Strictly ahead is the state a push resolves, and it is where a mutation
 		// deferred to a local commit leaves the branch. Publishing those is safe;
 		// publishing commits the user made for anything else is not.
-		if (!(await this.localCommitsTouchOnlyTasks(upstream.ref))) {
+		if (result.status === "ahead" && (await this.localCommitsTouchOnlyTasks(pinnedUpstream))) {
+			return;
+		}
+		if (result.status === "diverged") {
 			throw new Error(
-				`Guarded task publishing requires ${upstream.branch} to match ${upstream.ref}; publish or reconcile local commits first.`,
+				`Guarded task publishing cannot fast-forward ${upstream.branch} from ${upstream.ref}; reconcile the branch manually.`,
 			);
 		}
+		throw new Error(
+			`Guarded task publishing requires ${upstream.branch} to match ${upstream.ref}; publish or reconcile local commits first.`,
+		);
 	}
 
 	/** True when every file changed by the local-only commits lives in the task directory. */

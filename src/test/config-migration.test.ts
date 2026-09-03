@@ -3,6 +3,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Core } from "../core/backlog.ts";
 import { FileSystem } from "../file-system/operations.ts";
+import { isGuardedTaskSyncEnabled } from "../types/index.ts";
 import { createUniqueTestDir, safeCleanup, withTimeout } from "./test-utils.ts";
 
 describe("Config loading and legacy migration", () => {
@@ -180,5 +181,38 @@ auto_commit: false`;
 
 		const migratedMilestones = await core.filesystem.listMilestones();
 		expect(migratedMilestones.map((milestone) => milestone.title)).toEqual(["Release 'Alpha'"]);
+	});
+	it.each([
+		{ sync: false, publish: false, enabled: false },
+		{ sync: true, publish: false, enabled: true },
+		{ sync: false, publish: true, enabled: true },
+		{ sync: true, publish: true, enabled: true },
+	])("round-trips independent guarded task settings for sync=$sync and publish=$publish", async ({
+		sync,
+		publish,
+		enabled,
+	}) => {
+		await writeFile(
+			configPath,
+			`project_name: "Guarded Sync Project"
+statuses: ["To Do"]
+labels: []
+date_format: "YYYY-MM-DD"
+guarded_task_sync: ${sync}
+guarded_task_publish: ${publish}
+`,
+		);
+
+		const fs = new FileSystem(testRoot);
+		const config = await fs.loadConfig();
+		expect(config?.guardedTaskSync).toBe(sync);
+		expect(config?.guardedTaskPublish).toBe(publish);
+		expect(isGuardedTaskSyncEnabled(config)).toBe(enabled);
+
+		if (!config) throw new Error("Expected guarded sync config");
+		await fs.saveConfig(config);
+		const serialized = await Bun.file(configPath).text();
+		expect(serialized).toContain(`guarded_task_sync: ${sync}`);
+		expect(serialized).toContain(`guarded_task_publish: ${publish}`);
 	});
 });

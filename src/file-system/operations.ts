@@ -242,8 +242,12 @@ interface ParsedTaskFile {
 export const CREATE_LOCK_ERROR_CODE = "ECREATELOCK";
 export const CREATE_LOCK_ERROR_MESSAGE =
 	"Another task create/promote/demote operation is already in progress. Please try again.";
+export const GUARDED_TASK_SYNC_LOCK_ERROR_CODE = "EGUARDEDTASKSYNCLOCK";
+export const GUARDED_TASK_SYNC_LOCK_ERROR_MESSAGE =
+	"Another Backlog task synchronization or mutation is already in progress. Please try again.";
 
 const CREATE_LOCK_ERROR_NAME = "CreateLockError";
+const GUARDED_TASK_SYNC_LOCK_ERROR_NAME = "GuardedTaskSyncLockError";
 const TASK_LOCK_ERROR_NAME = "TaskLockError";
 const TASK_LOCK_ERROR_CODE = "ETASKLOCK";
 
@@ -266,6 +270,10 @@ function taskLockError(message: string, cause?: unknown): Error {
 	return lockError(TASK_LOCK_ERROR_NAME, TASK_LOCK_ERROR_CODE, message, cause);
 }
 
+function guardedTaskSyncLockError(message: string, cause?: unknown): Error {
+	return lockError(GUARDED_TASK_SYNC_LOCK_ERROR_NAME, GUARDED_TASK_SYNC_LOCK_ERROR_CODE, message, cause);
+}
+
 /**
  * Records a directory-level listing failure so callers can report it instead of treating an
  * unreadable directory as an empty one. A directory that does not exist yet is normal and is
@@ -279,6 +287,10 @@ function recordUnreadableDirectory(error: unknown, unreadable?: string[]): void 
 
 export function isCreateLockError(error: unknown): error is Error {
 	return isLockError(error, CREATE_LOCK_ERROR_NAME, CREATE_LOCK_ERROR_CODE);
+}
+
+export function isGuardedTaskSyncLockError(error: unknown): error is Error {
+	return isLockError(error, GUARDED_TASK_SYNC_LOCK_ERROR_NAME, GUARDED_TASK_SYNC_LOCK_ERROR_CODE);
 }
 
 export function isTaskLockError(error: unknown): error is Error {
@@ -552,6 +564,21 @@ export class FileSystem {
 		return error instanceof Error ? error : new Error(String(error));
 	}
 
+	private toGuardedTaskSyncLockError(error: unknown): Error {
+		if (isGuardedTaskSyncLockError(error)) {
+			return error;
+		}
+
+		const code = (error as NodeJS.ErrnoException | undefined)?.code;
+		if (code === "ELOCKED") {
+			return guardedTaskSyncLockError(GUARDED_TASK_SYNC_LOCK_ERROR_MESSAGE, error);
+		}
+		if (code === "ECOMPROMISED") {
+			return guardedTaskSyncLockError("Backlog task synchronization lock was interrupted. Please try again.", error);
+		}
+		return error instanceof Error ? error : new Error(String(error));
+	}
+
 	private toTaskLockError(error: unknown, taskId: string): Error {
 		if (isTaskLockError(error)) {
 			return error;
@@ -634,6 +661,32 @@ export class FileSystem {
 				retries: Math.max(Math.ceil(timeoutMs / retryDelayMs) - 1, 0),
 			},
 			(error) => this.toCreateLockError(error),
+			fn,
+		);
+	}
+
+	/**
+	 * Serializes guarded synchronization and Backlog task mutations across worktrees sharing a
+	 * Git common directory. Unlike per-task locks, this protects the checkout-level interval from
+	 * synchronization through commit and push.
+	 */
+	async withGuardedTaskSyncLock<T>(fn: () => Promise<T>): Promise<T> {
+		const backlogDir = await this.getBacklogDir();
+		const lockTarget = await this.getCreateLockTarget(backlogDir);
+		// proper-lockfile tracks ownership in-process by target path. The guarded
+		// repository lock may contain a create operation, whose create lock targets
+		// the Git common directory; use the existing lock directory as this lock's
+		// distinct target while keeping the guarded lockfile at its canonical path.
+		await mkdir(lockTarget.locksDir, { recursive: true });
+		return await this.withLockTarget(
+			lockTarget.locksDir,
+			join(lockTarget.locksDir, "guarded-task-sync"),
+			{
+				staleMs: DEFAULT_CREATE_LOCK_STALE_MS,
+				retryDelayMs: DEFAULT_CREATE_LOCK_RETRY_DELAY_MS,
+				retries: Math.max(Math.ceil(DEFAULT_CREATE_LOCK_TIMEOUT_MS / DEFAULT_CREATE_LOCK_RETRY_DELAY_MS) - 1, 0),
+			},
+			(error) => this.toGuardedTaskSyncLockError(error),
 			fn,
 		);
 	}

@@ -8,7 +8,7 @@ import {
 	generateMilestoneGroupedBoard,
 } from "../board.ts";
 import { type Core, createRuntimeCore } from "../core/backlog.ts";
-import type { Milestone, Task, TaskCreateInput } from "../types/index.ts";
+import type { GuardedTaskSyncResult, Milestone, Task, TaskCreateInput } from "../types/index.ts";
 import { copyToClipboard } from "../utils/clipboard.ts";
 import { areLabelSelectionsEqual, collectAvailableLabels } from "../utils/label-filter.ts";
 import {
@@ -47,6 +47,28 @@ export type ColumnData = {
 
 // blessed names a carriage return "return" and only a linefeed "enter", so both must be bound.
 export const BOARD_ENTER_KEYS = ["enter", "return"];
+
+export type GuardedTaskSyncTone = "green" | "yellow" | "gray" | "red";
+
+export function getGuardedTaskSyncTone(result: GuardedTaskSyncResult): GuardedTaskSyncTone {
+	switch (result.status) {
+		case "up-to-date":
+		case "fast-forwarded":
+			return "green";
+		case "local-changes":
+		case "ahead":
+		case "diverged":
+		case "no-upstream":
+		case "checkout-changed":
+		case "busy":
+			return "yellow";
+		case "disabled":
+		case "not-repository":
+			return "gray";
+		case "failed":
+			return "red";
+	}
+}
 
 type BoardSharedFilters = {
 	searchQuery: string;
@@ -288,7 +310,13 @@ export async function renderBoardTui(
 		viewSwitcher?: import("./view-switcher.ts").ViewSwitcher;
 		onTaskSelect?: (task: Task) => void;
 		onTabPress?: () => Promise<void>;
-		subscribeUpdates?: (update: (nextTasks: Task[], nextStatuses: string[]) => void) => void;
+		subscribeUpdates?: (
+			update: (
+				nextTasks: Task[],
+				nextStatuses: string[],
+				presentation?: { availableLabels: string[]; availableMilestones: string[] },
+			) => void,
+		) => void;
 		filters?: {
 			searchQuery: string;
 			excludeStatus?: string[];
@@ -321,7 +349,7 @@ export async function renderBoardTui(
 		hideEmptyColumns?: boolean;
 		projectName?: string;
 		createTask?: (input: TaskCreateInput) => Promise<Task>;
-		onSync?: () => Promise<string>;
+		onSync?: () => Promise<GuardedTaskSyncResult>;
 		screen?: ScreenInterface;
 		taskComposer?: (options: TaskComposerOptions) => Promise<Task | null>;
 	},
@@ -1028,13 +1056,17 @@ export async function renderBoardTui(
 			showTransientFooter(` {yellow-fg}${options.startupWarning}{/}`, 15000);
 		}
 
-		const updateBoard = (nextTasks: Task[], nextStatuses: string[]) => {
+		const updateBoard = (
+			nextTasks: Task[],
+			nextStatuses: string[],
+			presentation?: { availableLabels: string[]; availableMilestones: string[] },
+		) => {
 			const tasksChanged = !areBoardTaskCollectionsEqual(currentTasks, nextTasks);
 			const statusesChanged =
 				nextStatuses.length > 0 &&
 				(nextStatuses.length !== currentStatuses.length ||
 					nextStatuses.some((status, index) => status !== currentStatuses[index]));
-			if (!tasksChanged && !statusesChanged) return;
+			if (!tasksChanged && !statusesChanged && !presentation) return;
 
 			// Update source of truth
 			currentTasks = nextTasks;
@@ -1043,10 +1075,12 @@ export async function renderBoardTui(
 				configuredWorkflowStatuses = [...nextStatuses];
 				currentStatuses = nextStatuses;
 			}
-			configuredLabels = collectAvailableLabels(currentTasks, options?.availableLabels ?? []);
+			configuredLabels = presentation
+				? [...presentation.availableLabels]
+				: collectAvailableLabels(currentTasks, options?.availableLabels ?? []);
 			availableMilestones = Array.from(
 				new Set([
-					...(options?.availableMilestones ?? []),
+					...(presentation?.availableMilestones ?? options?.availableMilestones ?? []),
 					...currentTasks
 						.map((task) => task.milestone?.trim())
 						.filter((milestone): milestone is string => Boolean(milestone && milestone.length > 0))
@@ -1097,7 +1131,8 @@ export async function renderBoardTui(
 			}
 			try {
 				showTransientFooter(" {cyan-fg}Syncing current branch…{/}", 3000);
-				showTransientFooter(` {green-fg}${await options.onSync()}{/}`, 6000);
+				const result = await options.onSync();
+				showTransientFooter(` {${getGuardedTaskSyncTone(result)}-fg}${result.message}{/}`, 6000);
 			} catch (error) {
 				showTransientFooter(
 					` {red-fg}${error instanceof Error ? error.message : "Could not synchronize the current branch."}{/}`,

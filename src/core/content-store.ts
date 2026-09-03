@@ -631,8 +631,8 @@ export class ContentStore {
 	}
 
 	/**
-	 * Retry setting up the config watcher after initialization.
-	 * Called when the config file is created after the server started.
+	 * Reconcile the config watcher after a configuration-path change.
+	 * Root/content reconciliation remains queued separately.
 	 */
 	async ensureConfigWatcher(): Promise<void> {
 		if (this.closed) {
@@ -642,6 +642,38 @@ export class ContentStore {
 			this.canPublishContent() &&
 			this.enableWatchers &&
 			(!this.hasCurrentRootWatchers() || this.publishedRoot !== this.currentRoot());
+		this.reconcileConfigWatcher();
+
+		if (rootNeedsReconciliation) {
+			const config = await this.filesystem.loadConfig();
+			if (config && !this.closed) {
+				await this.handleConfigChanged(config, true);
+			}
+		}
+	}
+
+	/**
+	 * Reload every server-cached corpus after an external checkout change.
+	 * The complete operation runs on the store queue so callers can safely use
+	 * the first snapshot returned after it resolves.
+	 */
+	async refreshAllFromDisk(): Promise<void> {
+		this.assertOpen();
+		if (!this.initialized) {
+			await this.ensureInitialized();
+			return;
+		}
+		await this.enqueue(async () => {
+			this.filesystem.invalidateConfigCache();
+			const config = await this.filesystem.loadConfig();
+			this.reconcileConfigWatcher();
+			await this.reconcileConfigAndContent(config, true, this.currentRoot());
+		});
+	}
+
+	private reconcileConfigWatcher(): void {
+		if (!this.enableWatchers) return;
+
 		const configPath = resolve(this.filesystem.configFilePath);
 		if (!this.configWatcherActive || this.configWatcherPath !== configPath) {
 			this.stopConfigWatcher();
@@ -658,13 +690,6 @@ export class ContentStore {
 				}
 			}
 		}
-
-		if (rootNeedsReconciliation) {
-			const config = await this.filesystem.loadConfig();
-			if (config && !this.closed) {
-				await this.handleConfigChanged(config, true);
-			}
-		}
 	}
 
 	private createConfigWatcher(): WatchHandle | null {
@@ -676,15 +701,30 @@ export class ContentStore {
 			},
 		});
 	}
-
 	private async handleConfigChanged(config: BacklogConfig, bestEffortWatcherBinding = false): Promise<void> {
 		if (this.closed) return;
+		const expectedRoot = this.currentRoot();
+		await this.enqueue(async () => {
+			if (expectedRoot !== this.currentRoot()) return;
+			await this.reconcileConfigAndContent(config, bestEffortWatcherBinding, expectedRoot);
+		});
+	}
 
+	/**
+	 * Runs only from the content queue. Keeping this unqueued prevents
+	 * refreshAllFromDisk from waiting on work queued behind itself.
+	 */
+	private async reconcileConfigAndContent(
+		config: BacklogConfig | null,
+		bestEffortWatcherBinding = false,
+		expectedRoot?: string,
+	): Promise<void> {
+		if (this.closed || (expectedRoot !== undefined && expectedRoot !== this.currentRoot())) return;
 		const nextBacklogDir = resolve(this.filesystem.backlogDir);
 		const transitionOwner: PublicationOwner = { root: nextBacklogDir };
 		const previousBacklogDir = this.boundBacklogDir ? resolve(this.boundBacklogDir) : null;
 		const rootChanged = previousBacklogDir !== null && previousBacklogDir !== nextBacklogDir;
-		const needsRootWatcher = !this.hasCurrentRootWatchers();
+		const needsRootWatcher = this.enableWatchers && !this.hasCurrentRootWatchers();
 		let transitionEpoch = this.rootWatcherEpoch;
 
 		if (rootChanged) {
@@ -692,46 +732,44 @@ export class ContentStore {
 			transitionEpoch = this.rootWatcherEpoch;
 		}
 
-		await this.enqueue(async () => {
-			if (
-				this.closed ||
-				(rootChanged && transitionEpoch !== this.rootWatcherEpoch) ||
-				!this.isPublicationOwnerCurrent(transitionOwner)
-			)
-				return;
+		if (
+			this.closed ||
+			(rootChanged && transitionEpoch !== this.rootWatcherEpoch) ||
+			!this.isPublicationOwnerCurrent(transitionOwner)
+		)
+			return;
 
-			await this.filesystem.ensureBacklogStructure();
-			if (
-				this.closed ||
-				(rootChanged && transitionEpoch !== this.rootWatcherEpoch) ||
-				!this.isPublicationOwnerCurrent(transitionOwner)
-			)
-				return;
+		await this.filesystem.ensureBacklogStructure();
+		if (
+			this.closed ||
+			(rootChanged && transitionEpoch !== this.rootWatcherEpoch) ||
+			!this.isPublicationOwnerCurrent(transitionOwner)
+		)
+			return;
 
-			if (rootChanged || needsRootWatcher) {
-				this.boundBacklogDir = nextBacklogDir;
-				try {
-					await this.bindRootWatchers(transitionEpoch);
-				} catch (error) {
-					if (process.env.DEBUG) {
-						console.error("Failed to reconcile content watchers", error);
-					}
-					if (!bestEffortWatcherBinding) {
-						throw error;
-					}
+		if (this.enableWatchers && (rootChanged || needsRootWatcher)) {
+			this.boundBacklogDir = nextBacklogDir;
+			try {
+				await this.bindRootWatchers(transitionEpoch);
+			} catch (error) {
+				if (process.env.DEBUG) {
+					console.error("Failed to reconcile content watchers", error);
 				}
-				if (!this.isRootWatcherCurrent(transitionEpoch) || !this.isPublicationOwnerCurrent(transitionOwner)) return;
+				if (!bestEffortWatcherBinding) {
+					throw error;
+				}
 			}
-			if (!this.isPublicationOwnerCurrent(transitionOwner)) return;
+			if (!this.isRootWatcherCurrent(transitionEpoch) || !this.isPublicationOwnerCurrent(transitionOwner)) return;
+		}
+		if (!this.isPublicationOwnerCurrent(transitionOwner)) return;
 
-			const loaded = await this.loadCurrentContent(transitionEpoch, (snapshot) => {
-				this.installTaskCorpus(snapshot.taskCorpus ?? this.asTaskCorpus(snapshot.tasks));
-				this.replaceDocuments(snapshot.documents);
-				this.replaceDecisions(snapshot.decisions);
-			});
-			if (!loaded) return;
-			this.notifyConfig(config);
+		const loaded = await this.loadCurrentContent(transitionEpoch, (snapshot) => {
+			this.installTaskCorpus(snapshot.taskCorpus ?? this.asTaskCorpus(snapshot.tasks));
+			this.replaceDocuments(snapshot.documents);
+			this.replaceDecisions(snapshot.decisions);
 		});
+		if (!loaded || !config) return;
+		this.notifyConfig(config);
 	}
 
 	private async bindRootWatchers(epoch: number): Promise<void> {

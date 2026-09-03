@@ -4,6 +4,7 @@ import type {
 	BacklogConfig,
 	Decision,
 	Document,
+	GuardedTaskSyncResult,
 	Milestone,
 	SearchPriorityFilter,
 	SearchResult,
@@ -36,22 +37,6 @@ export interface InitializationStatus {
 	configLocation?: "folder" | "root" | null;
 	rootConfigPath?: string | null;
 }
-
-export type GuardedTaskSyncResult = {
-	status:
-		| "disabled"
-		| "not-repository"
-		| "no-upstream"
-		| "up-to-date"
-		| "fast-forwarded"
-		| "local-changes"
-		| "ahead"
-		| "diverged"
-		| "failed";
-	message: string;
-	branch?: string;
-	upstream?: string;
-};
 
 // Enhanced error types for better error handling
 export class ApiError extends Error {
@@ -95,6 +80,30 @@ async function toApiError(response: Response, fallbackMessage: string): Promise<
 /** The document and decision endpoints answer 409 only when an ID matches more than one file. */
 export function isAmbiguousIdConflict(error: unknown): error is ApiError {
 	return error instanceof ApiError && error.status === 409;
+}
+
+const RECOVERABLE_SYNC_CONFLICT_STATUSES: Partial<Record<GuardedTaskSyncResult["status"], true>> = {
+	"local-changes": true,
+	ahead: true,
+	diverged: true,
+	"checkout-changed": true,
+	busy: true,
+};
+
+function isGuardedTaskSyncResult(value: unknown): value is GuardedTaskSyncResult {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) {
+		return false;
+	}
+
+	const result = value as Record<string, unknown>;
+	return (
+		typeof result.status === "string" &&
+		Object.hasOwn(RECOVERABLE_SYNC_CONFLICT_STATUSES, result.status) &&
+		typeof result.message === "string" &&
+		result.message.trim().length > 0 &&
+		(result.branch === undefined || typeof result.branch === "string") &&
+		(result.upstream === undefined || typeof result.upstream === "string")
+	);
 }
 
 // Request configuration interface
@@ -405,7 +414,14 @@ export class ApiClient {
 	}
 
 	async syncCurrentBranch(): Promise<GuardedTaskSyncResult> {
-		return this.fetchJson<GuardedTaskSyncResult>(`${API_BASE}/sync`, { method: "POST" });
+		try {
+			return await this.fetchJson<GuardedTaskSyncResult>(`${API_BASE}/sync`, { method: "POST" });
+		} catch (error) {
+			if (error instanceof ApiError && error.status === 409 && isGuardedTaskSyncResult(error.data)) {
+				return error.data;
+			}
+			throw error;
+		}
 	}
 
 	async fetchDocs(): Promise<Document[]> {
