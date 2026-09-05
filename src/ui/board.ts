@@ -1843,6 +1843,13 @@ export async function renderBoardTui(
 				if (failures.length > 0) {
 					const details = failures.map((failure) => `${failure.taskId}: ${failure.reason}`).join("; ");
 					showTransientFooter(` {red-fg}Could not move ${failures.length} of the selected tasks — ${details}{/}`, 6000);
+				} else {
+					// The moves landed locally but could not be shared; say so, or the
+					// two machines drift apart with nothing on screen to explain it.
+					const skipReason = core.consumeTaskPublishSkipReason();
+					if (skipReason) {
+						showTransientFooter(` {yellow-fg}Saved locally, not published: ${skipReason}{/}`);
+					}
 				}
 			} catch (error) {
 				// On error, cancel the move and restore original positions
@@ -1851,6 +1858,9 @@ export async function renderBoardTui(
 				}
 				moveOp = null;
 				renderView();
+				// Same reasoning as the single-task move: a silent snap-back is
+				// indistinguishable from a keypress that never registered.
+				showTransientFooter(` {red-fg}Move failed: ${error instanceof Error ? error.message : "Unknown error"}{/}`);
 			} finally {
 				movePending = false;
 				settleMoveWrite();
