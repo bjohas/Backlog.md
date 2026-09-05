@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import Board from './Board';
 import { type Milestone, type Task } from '../../types';
 import { resolvePriorityValue } from '../../utils/priority-config';
+import { resolveProjectValue } from '../../utils/project-config';
 import { resolveTaskTypeValue } from '../../utils/task-type-config';
 import { type LaneMode } from '../lib/lanes';
 
@@ -25,6 +26,7 @@ interface BoardPageProps {
 	relativeDueDates?: boolean;
 	availablePriorities?: string[];
 	availableTypes?: string[];
+	availableProjects?: string[];
 }
 
 export default function BoardPage({
@@ -46,6 +48,7 @@ export default function BoardPage({
 	relativeDueDates,
 	availablePriorities,
 	availableTypes,
+	availableProjects,
 }: BoardPageProps) {
 	const [searchParams, setSearchParams] = useSearchParams();
 	const [highlightTaskId, setHighlightTaskId] = useState<string | null>(null);
@@ -105,7 +108,7 @@ export default function BoardPage({
 		}, { replace: true });
 	};
 
-	const handleFiltersChange = (filters: { assignee: string; labels: string[]; priority: string; taskType: string }) => {
+	const handleFiltersChange = (filters: { assignee: string; labels: string[]; priority: string; taskType: string; project: string }) => {
 		setSearchParams(params => {
 			if (filters.assignee) {
 				params.set('assignee', filters.assignee);
@@ -130,6 +133,11 @@ export default function BoardPage({
 			} else {
 				params.delete('type');
 			}
+			if (filters.project) {
+				params.set('project', filters.project);
+			} else {
+				params.delete('project');
+			}
 			return params;
 		}, { replace: true });
 	};
@@ -143,9 +151,14 @@ export default function BoardPage({
 	const filterPriority = resolvePriorityValue(rawFilterPriority, availablePriorities) ?? '';
 	const rawFilterType = searchParams.get('type') ?? '';
 	const filterType = resolveTaskTypeValue(rawFilterType, availableTypes) ?? '';
+	const rawFilterProject = searchParams.get('project') ?? '';
+	const filterProject = resolveProjectValue(rawFilterProject, availableProjects) ?? '';
 
 	useEffect(() => {
-		if (isLoading || (rawFilterPriority === filterPriority && rawFilterType === filterType)) {
+		if (
+			isLoading ||
+			(rawFilterPriority === filterPriority && rawFilterType === filterType && rawFilterProject === filterProject)
+		) {
 			return;
 		}
 		setSearchParams(params => {
@@ -159,9 +172,23 @@ export default function BoardPage({
 			} else {
 				params.delete('type');
 			}
+			if (filterProject) {
+				params.set('project', filterProject);
+			} else {
+				params.delete('project');
+			}
 			return params;
 		}, { replace: true });
-	}, [filterPriority, filterType, isLoading, rawFilterPriority, rawFilterType, setSearchParams]);
+	}, [
+		filterPriority,
+		filterType,
+		filterProject,
+		isLoading,
+		rawFilterPriority,
+		rawFilterType,
+		rawFilterProject,
+		setSearchParams,
+	]);
 
 	return (
 		<div className="page-shell transition-colors duration-200">
@@ -189,6 +216,8 @@ export default function BoardPage({
 				availablePriorities={availablePriorities}
 				filterType={filterType}
 				availableTypes={availableTypes}
+				filterProject={filterProject}
+				availableProjects={availableProjects}
 				onFiltersChange={handleFiltersChange}
 				hideEmptyColumns={hideEmptyColumns}
 				dateFormat={dateFormat}

@@ -49,7 +49,6 @@ export default function Layout({
 				docs={docs}
 				decisions={decisions}
 				isLoading={isLoading}
-				loadingMessage={loadingMessage}
 				error={error}
 				onRetry={onRefreshData}
 				onRefreshData={onRefreshData}
@@ -57,6 +56,7 @@ export default function Layout({
 			<div className="flex-1 flex flex-col min-h-0 min-w-0">
 				<Navigation
 					projectName={projectName}
+					loadingMessage={loadingMessage}
 					onSync={onSync}
 					syncResult={syncResult}
 					syncError={syncError}

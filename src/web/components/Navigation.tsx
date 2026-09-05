@@ -1,9 +1,11 @@
 import React from 'react';
 import type { GuardedTaskSyncResult } from '../../types';
+import { BranchIndexingIndicator } from './BranchIndexingIndicator';
 import ThemeToggle from './ThemeToggle';
 
 interface NavigationProps {
     projectName: string;
+    loadingMessage?: string | null;
     onSync: () => Promise<void>;
     syncResult?: GuardedTaskSyncResult | null;
     syncError?: string | null;
@@ -30,12 +32,12 @@ function getSyncTone(status: GuardedTaskSyncResult["status"] | undefined, hasErr
     return "text-gray-500 dark:text-gray-400";
 }
 
-const Navigation: React.FC<NavigationProps> = ({ projectName, onSync, syncResult, syncError, isSyncPending = false }) => {
+const Navigation: React.FC<NavigationProps> = ({ projectName, loadingMessage, onSync, syncResult, syncError, isSyncPending = false }) => {
     const syncMessage = syncError ?? syncResult?.message;
     const syncTone = getSyncTone(syncResult?.status, syncError !== null && syncError !== undefined);
 
     return (
-        <nav className="px-8 h-18 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 transition-colors duration-200">
+        <nav className="relative px-8 h-18 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 transition-colors duration-200">
             <div className="h-full flex items-center justify-between">
                 <div className="flex items-center gap-2">
                     <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">{projectName || 'Loading...'}</h1>
@@ -50,6 +52,7 @@ const Navigation: React.FC<NavigationProps> = ({ projectName, onSync, syncResult
                     </a>
                 </div>
                 <div className="flex items-center gap-3">
+                    <BranchIndexingIndicator message={loadingMessage} />
                     {syncMessage && (
                         <span className={`text-sm ${syncTone}`} role="status" aria-live="polite">
                             {syncMessage}

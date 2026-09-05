@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-09-04 21:07'
-updated_date: '2026-09-04 21:08'
+updated_date: '2026-09-04 21:38'
 labels: []
 dependencies: []
 ordinal: 314000
@@ -49,3 +49,22 @@ The fork is 122 commits ahead of and 90 behind upstream/main (fork point BACK-63
 9. Verify: bunx tsc --noEmit, bun run check ., bun run test.
 10. Update FORK.md; merge the scratch branch into main with --no-ff.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Merge resolved on branch merge/upstream-2026-09 (staged, not yet committed). All 19 conflicted files resolved: 50 hunks, ~1270 lines. bunx tsc --noEmit and bun run check . both pass.
+
+Key decisions: superseded fork fixes (emoji width, board popup refresh, sidebar quick search) resolved to upstream's implementations; src/core/backlog.ts took upstream's refactored bodies with the fork's withTaskMutationTransaction wrapper re-applied to reorderTask, moveTasksToStatus, archiveTask and demoteTask; StoredDate gained a relativeDue prop so all four web due-date sites keep going through upstream's single date component; formatDueDateForDisplay now appends the (UTC) label only when the stored value carries a time, because upstream #994 made due dates date-only.
+
+Blocked: bun i cannot run because /home/bjohas/.bun is read-only in the sandbox. Added to .twrw, which needs a session restart. See RESUME.md for the remaining steps, including the open question of which side (fork or upstream) should give up the colliding BACK-641..678 IDs before running backlog doctor --fix.
+
+Test baseline established. Full suite on the merge: 2919 pass, 8 skip, 21 fail (2948 tests, 295 files, 491s).
+
+All 21 failures are pre-existing, none caused by the merge:
+- 14 in src/test/tui-task-composer.test.ts (canonical persistence / git hooks) reproduce identically on main in a detached worktree.
+- 3 in src/test/web-task-details-modal-final-summary.test.tsx, 2 in src/test/help-popup.test.ts, 1 in src/test/tui-window-title.test.ts also reproduce on main.
+- 1 in src/test/cli-doc-decision-board.test.ts ('Created document doc-5' instead of doc-1) is a full-suite ordering flake: the file passes 20/20 in isolation on both main and the merge branch.
+
+Caveat: node_modules still holds the patched neo-neo-bblessed 1.0.9 because bun i is blocked by the read-only /home/bjohas/.bun mount, so the suite has not yet run against the 1.0.10 the merged package.json specifies. Re-run after the sandbox restart.
+<!-- SECTION:NOTES:END -->

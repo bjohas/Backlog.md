@@ -6,14 +6,24 @@ import type { BoxInterface, LineInterface, ScreenInterface, ScrollableTextInterf
 import { box, line, scrollabletext } from "neo-neo-bblessed";
 import { type Core, createRuntimeCore } from "../core/backlog.ts";
 import {
+	loadTaskDetail,
+	type TaskCorpus,
+	type TaskDetail,
+	taskDependencyGraph,
+	taskReadiness,
+	toTaskDetail,
+	withReadiness,
+} from "../core/task-detail.ts";
+import { formatDependencyGraphLines, formatDependencyNodeTuiLabel } from "../formatters/dependency-graph-text.ts";
+import {
 	buildAcceptanceCriteriaItems,
 	buildDefinitionOfDoneItems,
 	formatDateForDisplay,
 	formatTaskPlainText,
 } from "../formatters/task-plain-text.ts";
-import type { Milestone, Task, TaskSearchResult } from "../types/index.ts";
+import type { LabelMatchMode, Milestone, Task } from "../types/index.ts";
 import { copyToClipboard } from "../utils/clipboard.ts";
-import { areLabelSelectionsEqual, collectAvailableLabels, labelsToLower } from "../utils/label-filter.ts";
+import { areLabelSelectionsEqual, collectAvailableLabels } from "../utils/label-filter.ts";
 import {
 	createMilestoneFilterValueResolver,
 	type MilestoneFilterValueResolver,
@@ -22,14 +32,10 @@ import {
 } from "../utils/milestone-filter.ts";
 import { hasAnyPrefix } from "../utils/prefix-config.ts";
 import { formatPriorityLabel, getPriorityOptions, normalizePriorityValue } from "../utils/priority-config.ts";
-import {
-	createReadinessGraph,
-	formatReadinessBlockers,
-	getTaskReadiness,
-	type ReadinessGraph,
-} from "../utils/readiness.ts";
+import { getProjectValues, resolveProjectValues } from "../utils/project-config.ts";
+import { formatReadinessBlockers } from "../utils/readiness.ts";
 import { canonicalTaskId, taskIdsEqual } from "../utils/task-id.ts";
-import { applyTaskFilters, createTaskSearchIndex, type LabelMatchMode } from "../utils/task-search.ts";
+import { applyTaskFilters, createTaskSearchIndex } from "../utils/task-search.ts";
 import { attachSubtaskSummaries } from "../utils/task-subtasks.ts";
 import { getTaskTypeValues, resolveTaskTypeValues } from "../utils/task-type-config.ts";
 import { formatDueDateForDisplay } from "../utils/utc-date-display.ts";
@@ -46,11 +52,16 @@ import {
 import { openMultiSelectFilterPopup, openSingleSelectFilterPopup } from "./components/filter-popup.ts";
 import { type BoundaryNavigationKey, createGenericList, type GenericList } from "./components/generic-list.ts";
 import { openHelpPopup } from "./components/help-popup.ts";
-import { formatFooterContent, TASK_LIST_FOOTER_CONTENT } from "./footer-content.ts";
+import { formatFooterContent, getTaskListFooterContent } from "./footer-content.ts";
 import { formatHeading } from "./heading.ts";
 import { createLoadingScreen } from "./loading.ts";
+import { formatProjectBadge } from "./project.ts";
 import { formatStatusWithIcon, getStatusColor, getStatusIcon, wrapStatusColor } from "./status-icon.ts";
-import { completeTaskFromTui, formatTaskCompletionBlockedMessage } from "./task-lifecycle.ts";
+import {
+	completeTaskFromTui,
+	formatTaskArchivedMessage,
+	formatTaskCompletionBlockedMessage,
+} from "./task-lifecycle.ts";
 import { formatTaskTypeBadge } from "./task-type.ts";
 import { addScrollKeys, createScreen, formatTuiTitle } from "./tui.ts";
 
@@ -78,6 +89,7 @@ export function formatTaskViewerListItem(
 	task: Task,
 	availableWidth = Number.POSITIVE_INFINITY,
 	dateFormat?: string,
+	configuredProjects?: string[],
 ): string {
 	const progress = formatAcceptanceCriteriaProgress(task, availableWidth);
 	// The compact status icon keeps task identity visible beside the progress indicator. Its
@@ -90,15 +102,15 @@ export function formatTaskViewerListItem(
 	const labelsText = task.labels?.length ? ` {yellow-fg}[${task.labels.join(", ")}]{/}` : "";
 	const typeBadge = formatTaskTypeBadge(task.type);
 	const typeText = typeBadge ? ` ${typeBadge}` : "";
+	const projectBadge = formatProjectBadge(task.project, configuredProjects);
+	const projectText = projectBadge ? ` ${projectBadge}` : "";
 	const priorityText = getPriorityDisplay(task.priority);
-	const dueDateText = task.dueDate
-		? ` {gray-fg}(due ${formatDateForDisplay(task.dueDate, { dateFormat, appendUtcLabel: true })}){/}`
-		: "";
+	const dueDateText = task.dueDate ? ` {gray-fg}(due ${formatDateForDisplay(task.dueDate, { dateFormat })}){/}` : "";
 	const isCrossBranch = Boolean((task as Task & { branch?: string }).branch);
 	const branchText = isCrossBranch ? ` {green-fg}(${(task as Task & { branch?: string }).branch}){/}` : "";
 	const progressText = progress ? ` ${progress}` : "";
 
-	const content = `${wrapStatusColor(status, statusColor)}${progressText} {bold}${task.id}{/bold}${typeText}${dueDateText} - ${task.title}${priorityText}${assigneeText}${labelsText}${branchText}`;
+	const content = `${wrapStatusColor(status, statusColor)}${progressText} {bold}${task.id}{/bold}${typeText}${projectText}${dueDateText} - ${task.title}${priorityText}${assigneeText}${labelsText}${branchText}`;
 	return isCrossBranch ? `{gray-fg}${content}{/}` : content;
 }
 
@@ -193,6 +205,38 @@ export function resolveTaskListSelection<T>(
 }
 
 /**
+ * Merge the unfiltered readiness snapshot with the live display copies into the corpus the
+ * dependency graph and readiness resolve against.
+ *
+ * Live copies win over the snapshot so status edits made in this session count. The merge works on
+ * claimant groups rather than single records: an identity that either side holds more than once
+ * keeps every claimant, so the shared record index still reports it ambiguous exactly as the CLI
+ * does, instead of this merge quietly electing a winner.
+ */
+export function mergeDependencyCorpusTasks(snapshot: Task[], liveTasks: Task[]): Task[] {
+	const groupById = (tasks: Task[]) => {
+		const groups = new Map<string, Task[]>();
+		for (const task of tasks) {
+			const key = canonicalTaskId(task.id);
+			const group = groups.get(key);
+			if (group) group.push(task);
+			else groups.set(key, [task]);
+		}
+		return groups;
+	};
+
+	const groups = groupById(snapshot);
+	for (const [key, liveClaimants] of groupById(liveTasks)) {
+		const snapshotClaimants = groups.get(key);
+		// A live copy cannot be attributed to either claimant of a contested identity, so the
+		// snapshot's ambiguity stands until the view reloads.
+		if (snapshotClaimants && snapshotClaimants.length > 1) continue;
+		groups.set(key, liveClaimants);
+	}
+	return [...groups.values()].flat();
+}
+
+/**
  * Display task details with search/filter header UI
  */
 /**
@@ -224,6 +268,7 @@ export async function viewTaskEnhanced(
 		statusFilter?: string | string[];
 		excludeStatus?: string[];
 		typeFilter?: string[];
+		projectFilter?: string[];
 		priorityFilter?: string;
 		milestoneFilter?: string;
 		labelFilter?: string[];
@@ -246,6 +291,7 @@ export async function viewTaskEnhanced(
 			statusFilter: string[];
 			excludeStatus: string[];
 			typeFilter: string[];
+			projectFilter: string[];
 			priorityFilter: string;
 			labelFilter: string[];
 			labelMatch?: LabelMatchMode;
@@ -254,7 +300,7 @@ export async function viewTaskEnhanced(
 	} = {},
 ): Promise<void> {
 	if (output.isTTY === false) {
-		console.log(formatTaskPlainText(task));
+		console.log(formatTaskPlainText(await loadTaskDetail(options.core ?? (await createRuntimeCore()), task)));
 		return;
 	}
 
@@ -267,10 +313,8 @@ export async function viewTaskEnhanced(
 	let labels: string[];
 	let priorityOptions = getPriorityOptions();
 	let configuredTaskTypes = getTaskTypeValues();
+	let configuredProjects = getProjectValues();
 	let availableLabels: string[] = [];
-	// When tasks are provided, use in-memory search; otherwise use ContentStore-backed search
-	let taskSearchIndex: ReturnType<typeof createTaskSearchIndex> | null = null;
-	let searchService: Awaited<ReturnType<typeof core.getSearchService>> | null = null;
 	let contentStore: Awaited<ReturnType<typeof core.getContentStore>> | null = null;
 	// Completed tasks are loaded alongside the milestone metadata so dependency readiness can
 	// resolve dependencies that already left the active corpus, without a second full task load.
@@ -290,18 +334,18 @@ export async function viewTaskEnhanced(
 	let taskListPaneWidth = DEFAULT_TASK_LIST_PANE_WIDTH;
 
 	if (options.tasks) {
-		// Tasks already provided - use in-memory search (no ContentStore loading)
+		// Tasks already provided - no ContentStore loading
 		allTasks = options.tasks.filter((t) => t.id && t.id.trim() !== "" && hasAnyPrefix(t.id));
 		const config = await core.filesystem.loadConfig();
 		statuses = config?.statuses || ["To Do", "In Progress", "Done"];
 		labels = config?.labels || [];
 		priorityOptions = getPriorityOptions(config);
 		configuredTaskTypes = getTaskTypeValues(config);
+		configuredProjects = getProjectValues(config);
 		dateFormat = config?.dateFormat;
 		relativeDueDates = config?.relativeDueDates ?? false;
 		projectName = config?.projectName;
 		taskListPaneWidth = resolveTaskListPaneWidth(config?.taskListPaneWidth);
-		taskSearchIndex = createTaskSearchIndex(allTasks);
 	} else {
 		// Need to load tasks - show loading screen
 		const loadingScreen = await createLoadingScreen("Loading tasks");
@@ -312,6 +356,7 @@ export async function viewTaskEnhanced(
 			labels = config?.labels || [];
 			priorityOptions = getPriorityOptions(config);
 			configuredTaskTypes = getTaskTypeValues(config);
+			configuredProjects = getProjectValues(config);
 			dateFormat = config?.dateFormat;
 			relativeDueDates = config?.relativeDueDates ?? false;
 			projectName = config?.projectName;
@@ -319,7 +364,6 @@ export async function viewTaskEnhanced(
 
 			loadingScreen?.update("Loading tasks from branches...");
 			contentStore = await core.getContentStore();
-			searchService = await core.getSearchService();
 
 			loadingScreen?.update("Preparing task list...");
 			const tasks = await core.queryTasks();
@@ -329,6 +373,10 @@ export async function viewTaskEnhanced(
 		}
 	}
 
+	// One shared index over the loaded corpus, however that corpus arrived. Searching exactly the
+	// tasks this list renders is what keeps its results identical to the other surfaces'.
+	let taskSearchIndex = createTaskSearchIndex(allTasks);
+
 	// Collect available labels from config, tasks, and CLI-provided filters.
 	availableLabels = collectAvailableLabels(allTasks, [...labels, ...(options.labelFilter ?? [])]);
 
@@ -337,15 +385,14 @@ export async function viewTaskEnhanced(
 	// mutable because completing a task from this view moves it between them.
 	let readinessSnapshot = options.readinessTasks ? [...options.readinessTasks] : null;
 	const readinessCompletedTasks = [...completedTasks];
-	const buildReadinessGraph = () => {
+	// The corpus that both readiness and the dependency graph resolve against, so the two never
+	// disagree about which records this view can see.
+	const resolveDependencyCorpus = (): TaskCorpus => {
 		let tasks = allTasks;
 		if (readinessSnapshot) {
-			// Live display copies win over the snapshot so status edits in this session count.
-			const byId = new Map(readinessSnapshot.map((task) => [canonicalTaskId(task.id), task]));
-			for (const task of allTasks) byId.set(canonicalTaskId(task.id), task);
-			tasks = [...byId.values()];
+			tasks = mergeDependencyCorpusTasks(readinessSnapshot, allTasks);
 		}
-		return createReadinessGraph({ tasks, completedTasks: readinessCompletedTasks, statuses });
+		return { tasks, completedTasks: readinessCompletedTasks, statuses };
 	};
 
 	// State for filtering - normalize filters to match configured values
@@ -364,6 +411,7 @@ export async function viewTaskEnhanced(
 	const excludeStatusFilter = [...(options.excludeStatus ?? [])];
 
 	let taskTypeFilter = resolveTaskTypeValues(options.typeFilter ?? [], configuredTaskTypes).values;
+	let projectFilter = resolveProjectValues(options.projectFilter ?? [], configuredProjects).values;
 	let priorityFilter = normalizePriorityValue(options.priorityFilter) || "";
 	let labelFilter: string[] = [];
 	let milestoneFilter = options.milestoneFilter || "";
@@ -384,6 +432,7 @@ export async function viewTaskEnhanced(
 			statusFilter.length > 0 ||
 			excludeStatusFilter.length > 0 ||
 			taskTypeFilter.length > 0 ||
+			projectFilter.length > 0 ||
 			priorityFilter ||
 			labelFilter.length > 0 ||
 			milestoneFilter ||
@@ -433,6 +482,9 @@ export async function viewTaskEnhanced(
 			case "type":
 				filterHeader.focusType();
 				break;
+			case "project":
+				filterHeader.focusProject();
+				break;
 			case "priority":
 				filterHeader.focusPriority();
 				break;
@@ -462,6 +514,22 @@ export async function viewTaskEnhanced(
 				if (nextTypes !== null) {
 					taskTypeFilter = nextTypes;
 					filterHeader.setFilters({ taskTypes: nextTypes });
+					applyFilters();
+					notifyFilterChange();
+				}
+				return;
+			}
+
+			if (filterId === "project") {
+				const nextProjects = await openMultiSelectFilterPopup({
+					screen,
+					title: "Project Filter",
+					items: configuredProjects,
+					selectedItems: projectFilter,
+				});
+				if (nextProjects !== null) {
+					projectFilter = nextProjects;
+					filterHeader.setFilters({ projects: nextProjects });
 					applyFilters();
 					notifyFilterChange();
 				}
@@ -548,10 +616,20 @@ export async function viewTaskEnhanced(
 		statuses,
 		availableLabels,
 		availableMilestones: availableMilestoneTitles,
+		visibleFilters: [
+			"search",
+			"status",
+			"type",
+			...(configuredProjects.length > 0 ? (["project"] as const) : []),
+			"priority",
+			"milestone",
+			"labels",
+		],
 		initialFilters: {
 			search: searchQuery,
 			status: statusFilter,
 			taskTypes: taskTypeFilter,
+			projects: projectFilter,
 			priority: priorityFilter,
 			labels: labelFilter,
 			milestone: milestoneFilter,
@@ -561,6 +639,7 @@ export async function viewTaskEnhanced(
 			searchQuery = filters.search;
 			statusFilter = filters.status;
 			taskTypeFilter = filters.taskTypes;
+			projectFilter = filters.projects;
 			priorityFilter = filters.priority;
 			labelFilter = filters.labels;
 			if (labelsChanged) {
@@ -735,6 +814,7 @@ export async function viewTaskEnhanced(
 				statusFilter,
 				excludeStatus: excludeStatusFilter,
 				typeFilter: taskTypeFilter,
+				projectFilter,
 				priorityFilter,
 				labelFilter,
 				labelMatch,
@@ -745,74 +825,29 @@ export async function viewTaskEnhanced(
 
 	// Function to apply filters and refresh the task list
 	function applyFilters() {
-		const hasActiveFilters = Boolean(
-			searchQuery.trim() ||
-				statusFilter.length > 0 ||
-				excludeStatusFilter.length > 0 ||
-				taskTypeFilter.length > 0 ||
-				priorityFilter ||
-				labelFilter.length > 0 ||
-				milestoneFilter ||
-				options.readyFilter,
-		);
-		let nextFilteredTasks: Task[];
-		if (!hasActiveFilters) {
-			nextFilteredTasks = [...allTasks];
-		} else if (taskSearchIndex) {
-			nextFilteredTasks = applyTaskFilters(
-				allTasks,
-				{
-					query: searchQuery,
-					status: statusFilter.length > 0 ? [...statusFilter] : undefined,
-					excludeStatus: excludeStatusFilter,
-					type: taskTypeFilter,
-					priority: priorityFilter || undefined,
-					labels: labelFilter,
-					labelMatch,
-					milestone: milestoneFilter || undefined,
-					resolveMilestoneLabel,
-					ready: options.readyFilter ? buildReadinessGraph() : undefined,
-				},
-				taskSearchIndex,
-			);
-		} else if (searchService) {
-			const searchResults = searchService.search({
+		// An unset filter contributes no check, so this covers the no-filters case too.
+		const nextFilteredTasks = applyTaskFilters(
+			allTasks,
+			{
 				query: searchQuery,
-				filters: {
-					status: statusFilter.length > 0 ? [...statusFilter] : undefined,
-					excludeStatus: excludeStatusFilter,
-					type: taskTypeFilter,
-					priority: priorityFilter || undefined,
-					labels: labelFilter.length > 0 ? labelFilter : undefined,
-				},
-				types: ["task"],
-			});
-			nextFilteredTasks = searchResults.filter((r): r is TaskSearchResult => r.type === "task").map((r) => r.task);
-			if (milestoneFilter) {
-				nextFilteredTasks = nextFilteredTasks.filter((task) => {
-					if (milestoneFilter === NO_MILESTONE_FILTER_VALUE) {
-						return !task.milestone?.trim();
-					}
-					if (!task.milestone) return false;
-					const taskMilestoneTitle = resolveMilestoneLabel(task.milestone);
-					return taskMilestoneTitle.toLowerCase() === milestoneFilter.toLowerCase();
-				});
-			}
-			if (labelMatch === "all" && labelFilter.length > 0) {
-				const requiredLabels = labelsToLower(labelFilter);
-				nextFilteredTasks = nextFilteredTasks.filter((task) => {
-					const taskLabels = new Set(labelsToLower(task.labels ?? []));
-					return requiredLabels.every((label) => taskLabels.has(label));
-				});
-			}
-			if (options.readyFilter) {
-				const graph = buildReadinessGraph();
-				nextFilteredTasks = nextFilteredTasks.filter((task) => getTaskReadiness(task, graph).isReady);
-			}
-		} else {
-			nextFilteredTasks = [...allTasks];
-		}
-		filteredTasks = taskLimit !== undefined ? nextFilteredTasks.slice(0, taskLimit) : nextFilteredTasks;
+				status: statusFilter.length > 0 ? [...statusFilter] : undefined,
+				excludeStatus: excludeStatusFilter,
+				type: taskTypeFilter,
+				project: projectFilter,
+				priority: priorityFilter || undefined,
+				labels: labelFilter,
+				labelMatch,
+				milestone: milestoneFilter || undefined,
+				resolveMilestoneLabel,
+			},
+			taskSearchIndex,
+		);
+		// Readiness is derived over the filtered list in one pass against the whole corpus, so a
+		// dependency the other filters hid still decides the verdict.
+		const readyFilteredTasks = options.readyFilter
+			? withReadiness(nextFilteredTasks, resolveDependencyCorpus()).filter((task) => task.isReady)
+			: nextFilteredTasks;
+		filteredTasks = taskLimit !== undefined ? readyFilteredTasks.slice(0, taskLimit) : readyFilteredTasks;
 
 		// Update the task list label
 		if (taskListPane.setLabel) {
@@ -837,6 +872,9 @@ export async function viewTaskEnhanced(
 			}
 			if (taskTypeFilter.length > 0) {
 				activeFilters.push(`Type: {magenta-fg}${taskTypeFilter.join(", ")}{/}`);
+			}
+			if (projectFilter.length > 0) {
+				activeFilters.push(`Project: {blue-fg}${projectFilter.join(", ")}{/}`);
 			}
 			if (priorityFilter) {
 				activeFilters.push(`Priority: {cyan-fg}${priorityFilter}{/}`);
@@ -964,7 +1002,8 @@ export async function viewTaskEnhanced(
 			left: 1,
 			width: "100%-4",
 			height: "100%-3",
-			itemRenderer: (task: Task) => formatTaskViewerListItem(task, getTaskListSummaryWidth(), dateFormat),
+			itemRenderer: (task: Task) =>
+				formatTaskViewerListItem(task, getTaskListSummaryWidth(), dateFormat, configuredProjects),
 			onSelect: (selected: Task | Task[]) => {
 				const selectedTask = Array.isArray(selected) ? selected[0] : selected;
 				void applySelection(selectedTask || null);
@@ -1137,13 +1176,12 @@ export async function viewTaskEnhanced(
 
 		screen.title = formatTuiTitle(`Task ${currentSelectedTask.id} - ${currentSelectedTask.title}`, projectName);
 
-		const detailContent = generateDetailContent(
-			currentSelectedTask,
+		const detailContent = generateDetailContent(toTaskDetail(currentSelectedTask, resolveDependencyCorpus()), {
 			resolveMilestoneLabel,
 			dateFormat,
-			buildReadinessGraph(),
+			configuredProjects,
 			relativeDueDates,
-		);
+		});
 
 		// Calculate header height based on content and available width
 		const detailPaneWidth = typeof detailPane.width === "number" ? detailPane.width : 60;
@@ -1221,7 +1259,7 @@ export async function viewTaskEnhanced(
 				" {cyan-fg}[Tab]{/} View | {cyan-fg}[←]{/} List | {cyan-fg}[↑↓]{/} Scroll | {cyan-fg}[E]{/} Edit | {cyan-fg}[Y]{/} Yank | {cyan-fg}[?]{/} Help | {cyan-fg}[q]{/} Quit";
 		} else {
 			// Task list help
-			content = TASK_LIST_FOOTER_CONTENT;
+			content = getTaskListFooterContent({ hasProjects: configuredProjects.length > 0 });
 		}
 
 		setHelpBarContent(content);
@@ -1282,9 +1320,7 @@ export async function viewTaskEnhanced(
 				const enhancedTask = enrichTask(result.task) ?? result.task;
 				currentSelectedTask = enhancedTask;
 				options.onTaskChange?.(enhancedTask);
-				if (taskSearchIndex) {
-					taskSearchIndex = createTaskSearchIndex(allTasks);
-				}
+				taskSearchIndex = createTaskSearchIndex(allTasks);
 			}
 
 			applyFilters();
@@ -1312,9 +1348,7 @@ export async function viewTaskEnhanced(
 		const nextTask = remainingFilteredTasks[nextIndex] ?? null;
 
 		allTasks = allTasks.filter((taskItem) => taskItem.id !== taskId);
-		if (taskSearchIndex) {
-			taskSearchIndex = createTaskSearchIndex(allTasks);
-		}
+		taskSearchIndex = createTaskSearchIndex(allTasks);
 		if (nextTask) {
 			currentSelectedTask = enrichTask(nextTask) ?? nextTask;
 			options.onTaskChange?.(currentSelectedTask);
@@ -1355,13 +1389,8 @@ export async function viewTaskEnhanced(
 
 		try {
 			const config = action === "archive" ? await core.fs.loadConfig() : null;
-			const result =
-				action === "complete"
-					? await completeTaskFromTui(core, task)
-					: {
-							success: await core.archiveTask(task.id, config?.autoCommit ?? false),
-							reason: "failed" as const,
-						};
+			const archived = action === "archive" ? await core.archiveTask(task.id, config?.autoCommit ?? false) : undefined;
+			const result = archived ? { ...archived, reason: "failed" as const } : await completeTaskFromTui(core, task);
 
 			if (result.success) {
 				// The record just left the active corpus, so drop it from the readiness graph. A
@@ -1372,8 +1401,8 @@ export async function viewTaskEnhanced(
 					readinessCompletedTasks.push(task);
 				}
 				removeTaskFromCurrentView(task.id);
-				const label = action === "complete" ? "Completed" : "Archived";
-				showTransientHelp(` {green-fg}${label} ${task.id}{/}`);
+				const message = archived ? formatTaskArchivedMessage(task.id, archived.cleanedTaskIds) : `Completed ${task.id}`;
+				showTransientHelp(` {green-fg}${message}{/}`);
 			} else if (action === "complete" && result.reason === "not-terminal") {
 				showTransientHelp(` {red-fg}${formatTaskCompletionBlockedMessage(task.id, result.terminalStatus)}{/}`);
 			} else {
@@ -1415,6 +1444,15 @@ export async function viewTaskEnhanced(
 		if (modalOpen || filterPopupOpen) return;
 		void openFilterPicker("type");
 	});
+
+	if (configuredProjects.length > 0) {
+		// Not "g"/"G": those already scroll the detail pane to top/bottom (see the
+		// boxInstance bindings above) and a screen-level handler here would conflict.
+		screen.key(["v", "V"], () => {
+			if (modalOpen || filterPopupOpen) return;
+			void openFilterPicker("project");
+		});
+	}
 
 	screen.key(["p", "P"], () => {
 		if (modalOpen) return;
@@ -1464,7 +1502,7 @@ export async function viewTaskEnhanced(
 
 	screen.key(["?"], async () => {
 		if (modalOpen || filterPopupOpen) return;
-		await runWithModalGuard(() => openHelpPopup(screen, "task-list"));
+		await runWithModalGuard(() => openHelpPopup(screen, "task-list", { hasProjects: configuredProjects.length > 0 }));
 	});
 
 	screen.key(["escape"], () => {
@@ -1485,7 +1523,6 @@ export async function viewTaskEnhanced(
 			}
 		} else {
 			// If already in task list, quit
-			searchService?.dispose();
 			contentStore?.dispose();
 			filterHeader.destroy();
 			screen.destroy();
@@ -1502,7 +1539,6 @@ export async function viewTaskEnhanced(
 			}
 			if (currentFocus === "list" || currentFocus === "detail") {
 				// Cleanup before switching
-				searchService?.dispose();
 				contentStore?.dispose();
 				filterHeader.destroy();
 				screen.destroy();
@@ -1516,7 +1552,6 @@ export async function viewTaskEnhanced(
 		if (modalOpen || filterPopupOpen) {
 			return;
 		}
-		searchService?.dispose();
 		contentStore?.dispose();
 		filterHeader.destroy();
 		screen.destroy();
@@ -1537,7 +1572,7 @@ export async function viewTaskEnhanced(
 		statuses = nextStatuses;
 		labels = nextLabels;
 		availableLabels = collectAvailableLabels(allTasks, labels);
-		if (taskSearchIndex) taskSearchIndex = createTaskSearchIndex(allTasks);
+		taskSearchIndex = createTaskSearchIndex(allTasks);
 
 		const previousTaskId = currentSelectedTask.id;
 		const currentTask =
@@ -1574,23 +1609,24 @@ export async function viewTaskEnhanced(
 				clearTimeout(helpRestoreTimer);
 				helpRestoreTimer = null;
 			}
-			searchService?.dispose();
 			contentStore?.dispose();
 			resolve();
 		});
 	});
 }
 
+export interface TaskDetailContentOptions {
+	resolveMilestoneLabel?: (milestone: string) => string;
+	dateFormat?: string;
+	configuredProjects?: string[];
+	relativeDueDates?: boolean;
+}
+
 export function generateDetailContent(
-	task: Task,
-	resolveMilestoneLabel?: (milestone: string) => string,
-	dateFormat?: string,
-	// Readiness is rendered only when the caller can supply the task graph to resolve dependencies
-	// against. Callers without one (the board quick-look popup) get no readiness line rather than a
-	// wrong one derived from an empty graph.
-	readinessGraph?: ReadinessGraph,
-	relativeDueDates = false,
+	task: Task | TaskDetail,
+	options: TaskDetailContentOptions = {},
 ): { headerContent: string[]; bodyContent: string[] } {
+	const { resolveMilestoneLabel, dateFormat, configuredProjects, relativeDueDates = false } = options;
 	const headerContent = [
 		` ${wrapStatusColor(formatStatusWithIcon(task.status), getStatusColor(task.status))} {bold}{blue-fg}${task.id}{/blue-fg}{/bold} - ${task.title}`,
 	];
@@ -1629,6 +1665,9 @@ export function generateDetailContent(
 	if (task.type) {
 		metadata.push(`{bold}Type:{/bold} ${formatTaskTypeBadge(task.type)}`);
 	}
+	if (task.project && configuredProjects?.length) {
+		metadata.push(`{bold}Project:{/bold} ${formatProjectBadge(task.project, configuredProjects)}`);
+	}
 	if (task.assignee?.length) {
 		const assigneeList = task.assignee.map((a) => (a.startsWith("@") ? a : `@${a}`)).join(", ");
 		metadata.push(`{bold}Assignee:{/bold} {cyan-fg}${assigneeList}{/}`);
@@ -1652,10 +1691,12 @@ export function generateDetailContent(
 		metadata.push(`{bold}Subtasks:{/bold} ${task.subtasks.length} task${task.subtasks.length > 1 ? "s" : ""}`);
 	}
 	if (task.dependencies?.length) {
-		metadata.push(`{bold}Dependencies:{/bold} ${task.dependencies.join(", ")}`);
-		// Readiness only earns a line when dependencies exist; otherwise the status already says it.
-		if (readinessGraph) {
-			const readiness = getTaskReadiness(task, readinessGraph);
+		// The Dependency Graph section below names the same dependencies and resolves them, so the
+		// raw ID list is not repeated here. Readiness stays: it is a verdict, not a restatement.
+		// It is rendered only when the caller was handed a detail read that carries it: a caller
+		// without one (the board quick-look popup) gets no readiness line rather than a guess.
+		const readiness = taskReadiness(task);
+		if (readiness) {
 			if (readiness.isReady) {
 				metadata.push("{bold}Readiness:{/bold} {green-fg}✓ Ready to start{/}");
 			} else if (readiness.isBlocked) {
@@ -1671,6 +1712,19 @@ export function generateDetailContent(
 
 	bodyContent.push(metadata.join("\n"));
 	bodyContent.push("");
+
+	// Directly below the details block and above the description, the same relative position the
+	// canonical CLI plain output uses. This builder is not shared with the plain formatter, so the
+	// order is kept deliberately in step rather than inherited.
+	const dependencyGraph = taskDependencyGraph(task);
+	const dependencyGraphLines = dependencyGraph
+		? formatDependencyGraphLines(dependencyGraph, { formatLabel: formatDependencyNodeTuiLabel })
+		: [];
+	if (dependencyGraphLines.length > 0) {
+		bodyContent.push(formatHeading("Dependency Graph", 2));
+		bodyContent.push(dependencyGraphLines.join("\n"));
+		bodyContent.push("");
+	}
 
 	bodyContent.push(formatHeading("Description", 2));
 	const descriptionText = task.description?.trim();
@@ -1791,6 +1845,7 @@ export async function createTaskPopup(
 	task: Task,
 	resolveMilestoneLabel?: (milestone: string) => string,
 	dateFormat?: string,
+	configuredProjects?: string[],
 	relativeDueDates = false,
 ): Promise<{
 	background: BoxInterface;
@@ -1828,13 +1883,12 @@ export async function createTaskPopup(
 
 	popup.setFront?.();
 
-	const { headerContent, bodyContent } = generateDetailContent(
-		task,
+	const { headerContent, bodyContent } = generateDetailContent(task, {
 		resolveMilestoneLabel,
 		dateFormat,
-		undefined,
+		configuredProjects,
 		relativeDueDates,
-	);
+	});
 
 	// Calculate header height based on content and available width
 	const popupWidth = typeof popup.width === "number" ? popup.width : 80;

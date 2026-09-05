@@ -14,6 +14,7 @@ import {
 	choiceType,
 	getCliTaskTypeValues,
 	priorityType,
+	projectType,
 	statusType,
 	taskType,
 } from "./commands/help-schema.ts";
@@ -24,8 +25,16 @@ import { DEFAULT_DIRECTORIES, DEFAULT_FILES, DEFAULT_STATUSES } from "./constant
 import { type DuplicateRepairPlan, findLocalDuplicateTaskIds } from "./core/duplicate-task-repair.ts";
 import { initializeProject } from "./core/init.ts";
 import { buildMilestoneBuckets, collectArchivedMilestoneKeys, milestoneKey } from "./core/milestones.ts";
+import { loadTaskDetail, loadTaskListItems } from "./core/task-detail.ts";
 import { isConfigValueError } from "./file-system/operations.ts";
-import { decisionListJson, printJson, searchJson, taskListJson, taskViewJson } from "./formatters/json-output.ts";
+import {
+	decisionListJson,
+	printJson,
+	type SearchResultInput,
+	searchJson,
+	taskListJson,
+	taskViewJson,
+} from "./formatters/json-output.ts";
 import { formatTaskPlainText } from "./formatters/task-plain-text.ts";
 import {
 	type AgentInstructionFile,
@@ -59,6 +68,7 @@ import {
 	type TaskUpdateInput,
 } from "./types/index.ts";
 import type { TaskEditArgs } from "./types/task-edit-args.ts";
+import { formatAcceptanceCriteriaSummarySuffix } from "./ui/acceptance-criteria-progress.ts";
 import { genericSelectList } from "./ui/components/generic-list.ts";
 import { createLoadingScreen } from "./ui/loading.ts";
 import { viewTaskEnhanced } from "./ui/task-viewer-with-search.ts";
@@ -66,6 +76,7 @@ import { scrollableViewer } from "./ui/tui.ts";
 import { type AgentSelectionValue, processAgentSelection } from "./utils/agent-selection.ts";
 import { normalizeProjectBacklogDirectory } from "./utils/backlog-directory.ts";
 import { launchBrowser } from "./utils/browser-launch.ts";
+import { formatDependencyCleanupMessage } from "./utils/dependency-graph.ts";
 import {
 	type ContentIdentityReport,
 	type DraftIdentityFindings,
@@ -76,7 +87,6 @@ import {
 import { AmbiguousIdError, isAmbiguousIdError } from "./utils/entity-id.ts";
 import { findBacklogRoot } from "./utils/find-backlog-root.ts";
 import { generateNextDecisionId } from "./utils/id-generators.ts";
-import { labelsToLower } from "./utils/label-filter.ts";
 import {
 	formatMcpClientSetupCommand,
 	getMcpClientSetupCommand,
@@ -85,13 +95,26 @@ import {
 	runMcpClientSetupCommand,
 } from "./utils/mcp-client-setup.ts";
 import { resolveMilestoneInputForStorage } from "./utils/milestone-storage.ts";
-import { DRAFT_PREFIX, hasAnyPrefix, normalizeId } from "./utils/prefix-config.ts";
+import {
+	DRAFT_PREFIX,
+	getTaskPrefixError,
+	hasAnyPrefix,
+	isReservedTaskPrefix,
+	normalizeId,
+} from "./utils/prefix-config.ts";
 import { formatValidPriorityValues, getPriorityOptions, resolvePriorityValue } from "./utils/priority-config.ts";
+import {
+	formatValidProjectValues,
+	getProjectValues,
+	noProjectsConfiguredMessage,
+	resolveProjectValues,
+} from "./utils/project-config.ts";
 import { type ReadOutputMode, resolveReadOutputMode } from "./utils/read-output-mode.ts";
-import { getTaskReadiness, loadReadinessGraph } from "./utils/readiness.ts";
 import { resolveRuntimeCwd } from "./utils/runtime-cwd.ts";
 import { formatValidStatuses, getCanonicalStatus, getCanonicalStatuses, getValidStatuses } from "./utils/status.ts";
 import {
+	type DependencyDefects,
+	findDependencyDefects,
 	parseClearableStringList,
 	parseDelimitedStringList,
 	parsePositiveIndexList,
@@ -123,6 +146,7 @@ const CONFIG_GET_KEYS = [
 	"labels",
 	"priorities",
 	"types",
+	"projects",
 	"milestones",
 	"definitionOfDone",
 	"dateFormat",
@@ -301,21 +325,13 @@ function formatTaskEditError(error: unknown, taskId: string, commandKind = "task
 	return message;
 }
 
-function taskMatchesAllLabels(task: Task, labels: string[]): boolean {
-	const requiredLabels = labelsToLower(labels);
-	if (requiredLabels.length === 0) {
-		return true;
-	}
-	const taskLabels = new Set(labelsToLower(task.labels ?? []));
-	return requiredLabels.every((label) => taskLabels.has(label));
-}
-
 function formatPlainTaskListRow(task: Task, options: { includeStatus?: boolean } = {}): string {
 	const priorityIndicator = task.priority ? `[${task.priority.toUpperCase()}] ` : "";
 	const typeIndicator = task.type ? `[${task.type}] ` : "";
 	const statusIndicator = options.includeStatus && task.status ? ` (${task.status})` : "";
-	const dueDate = task.dueDate ? ` (due ${formatUtcDateForDisplay(task.dueDate, { appendUtcLabel: true })})` : "";
-	return `  ${priorityIndicator}${typeIndicator}${task.id} - ${task.title}${statusIndicator}${dueDate}`;
+	const acceptanceCriteria = formatAcceptanceCriteriaSummarySuffix(task);
+	const dueDate = task.dueDate ? ` (due ${formatUtcDateForDisplay(task.dueDate)})` : "";
+	return `  ${priorityIndicator}${typeIndicator}${task.id} - ${task.title}${statusIndicator}${acceptanceCriteria}${dueDate}`;
 }
 
 async function normalizeCliStatusList(core: Core, values: string[], optionName: string): Promise<string[] | null> {
@@ -352,6 +368,24 @@ async function normalizeCliTaskTypes(core: Core, values: string[], optionName: s
 		return null;
 	}
 	return canonicalTypes;
+}
+
+async function normalizeCliProjects(core: Core, values: string[], optionName: string): Promise<string[] | null> {
+	const config = await core.filesystem.loadConfig();
+	if (getProjectValues(config).length === 0) {
+		console.error(noProjectsConfiguredMessage(core.filesystem.configFilePath));
+		process.exitCode = 1;
+		return null;
+	}
+	const { values: canonicalProjects, invalid } = resolveProjectValues(values, config);
+	if (invalid.length > 0) {
+		console.error(
+			`Invalid ${optionName}: ${invalid.join(", ")}. Valid projects are: ${formatValidProjectValues(config)}`,
+		);
+		process.exitCode = 1;
+		return null;
+	}
+	return canonicalProjects;
 }
 
 function formatToolResultText(result: CallToolResult): string {
@@ -472,6 +506,26 @@ function printDraftIdentityReport(findings: DraftIdentityFindings): void {
 	}
 }
 
+function printDependencyDefectsReport(defects: DependencyDefects): void {
+	if (defects.selfDependencies.length > 0) {
+		console.log("\nSelf-referential dependencies (diagnostic only):");
+		for (const finding of defects.selfDependencies) {
+			const spelling = finding.dependency === finding.taskId ? "" : ` (recorded as "${finding.dependency}")`;
+			console.log(`  - ${finding.taskId} depends on itself${spelling}`);
+		}
+		console.log(
+			"Rewrite the task's dependencies without its own ID: 'backlog task edit <id> --dep <ids>' (or --clear-deps); edit the file directly for records under backlog/completed.",
+		);
+	}
+	if (defects.cycles.length > 0) {
+		console.log("\nDependency cycles (diagnostic only):");
+		for (const cycle of defects.cycles) console.log(`  - ${cycle.join(" -> ")}`);
+		console.log(
+			"Break each cycle by rewriting one task's dependencies: 'backlog task edit <id> --dep <ids>' (or --clear-deps); edit the file directly for records under backlog/completed.",
+		);
+	}
+}
+
 async function runMilestoneMutation(action: (handlers: MilestoneHandlers) => Promise<CallToolResult>): Promise<void> {
 	const cwd = await requireProjectRoot();
 	const core = new Core(cwd);
@@ -505,6 +559,7 @@ function hasCreateFieldFlags(options: Record<string, unknown>): boolean {
 			options.labels !== undefined ||
 			options.priority !== undefined ||
 			options.type !== undefined ||
+			options.project !== undefined ||
 			options.ordinal !== undefined ||
 			options.milestone !== undefined ||
 			options.dueDate !== undefined ||
@@ -536,6 +591,7 @@ function hasEditFieldFlags(options: Record<string, unknown>): boolean {
 			options.label !== undefined ||
 			options.priority !== undefined ||
 			options.type !== undefined ||
+			options.project !== undefined ||
 			options.ordinal !== undefined ||
 			options.milestone !== undefined ||
 			options.clearMilestone ||
@@ -575,6 +631,50 @@ function hasEditFieldFlags(options: Record<string, unknown>): boolean {
 			options.clearDocs ||
 			options.modifiedFile !== undefined,
 	);
+}
+
+/**
+ * Flags whose value cannot mean the same thing across a batch. A title, a body section, or a
+ * 1-based checklist index belongs to one task, so `task edit` rejects them once the user passes
+ * more than one task ID rather than writing the same value over every task.
+ */
+const PER_TASK_ONLY_EDIT_FLAGS: ReadonlyArray<{ option: string; flag: string }> = [
+	{ option: "title", flag: "--title" },
+	{ option: "description", flag: "--description" },
+	{ option: "desc", flag: "--desc" },
+	{ option: "plan", flag: "--plan" },
+	{ option: "appendPlan", flag: "--append-plan" },
+	{ option: "notes", flag: "--notes" },
+	{ option: "appendNotes", flag: "--append-notes" },
+	{ option: "finalSummary", flag: "--final-summary" },
+	{ option: "appendFinalSummary", flag: "--append-final-summary" },
+	{ option: "clearFinalSummary", flag: "--clear-final-summary" },
+	{ option: "comment", flag: "--comment" },
+	{ option: "commentAuthor", flag: "--comment-author" },
+	{ option: "ordinal", flag: "--ordinal" },
+	{ option: "modifiedFile", flag: "--modified-file" },
+	{ option: "removeAc", flag: "--remove-ac" },
+	{ option: "checkAc", flag: "--check-ac" },
+	{ option: "uncheckAc", flag: "--uncheck-ac" },
+	{ option: "removeDod", flag: "--remove-dod" },
+	{ option: "checkDod", flag: "--check-dod" },
+	{ option: "uncheckDod", flag: "--uncheck-dod" },
+	// Acceptance criteria and Definition of Done are task-specific body sections like the plan and
+	// notes above: replacing, clearing, or adding to them across a batch erases or duplicates
+	// content that differs per task.
+	{ option: "acceptanceCriteria", flag: "--acceptance-criteria" },
+	{ option: "clearAc", flag: "--clear-ac" },
+	{ option: "ac", flag: "--ac" },
+	{ option: "dod", flag: "--dod" },
+];
+
+function findPerTaskOnlyFlag(options: Record<string, unknown>): string | null {
+	for (const { option, flag } of PER_TASK_ONLY_EDIT_FLAGS) {
+		if (options[option] !== undefined) {
+			return `Cannot use ${flag} with more than one task ID. ${flag} applies to one task only. Run backlog task edit once per task.`;
+		}
+	}
+	return null;
 }
 
 /**
@@ -913,6 +1013,11 @@ addHelpSchema(program.command("init [projectName]"), {
 			description: "Instruction files to create; cursor writes AGENTS.md; comma-separated",
 		},
 		{ name: "--backlog-dir", type: "Project-relative path", description: "backlog, .backlog, or custom path" },
+		{
+			name: "--task-prefix",
+			type: "String (letters only; default: task)",
+			description: "Task ID prefix; draft, doc, and decision are reserved",
+		},
 		{ name: "--no-git", type: "Boolean", description: "Initialize without Git integration" },
 	],
 	writes: "Backlog directory, config file, optional agent instruction files, and optional git commit",
@@ -943,7 +1048,10 @@ addHelpSchema(program.command("init [projectName]"), {
 	)
 	.option("--backlog-dir <path>", "backlog folder for init: backlog, .backlog, or a custom project-relative path")
 	.option("--config-location <location>", "config location for init: folder or root")
-	.option("--task-prefix <prefix>", "custom task prefix, letters only (default: task)")
+	.option(
+		"--task-prefix <prefix>",
+		"custom task prefix, letters only (default: task); draft, doc, and decision are reserved",
+	)
 	.option("--no-git", "initialize without Git integration")
 	.option("--defaults", "use default values for all prompts")
 	.action(
@@ -1224,16 +1332,8 @@ addHelpSchema(program.command("init [projectName]"), {
 				if (!taskPrefix && !isNonInteractive && !isReInitialization) {
 					const enteredPrefix = await clack.text({
 						message: "Task prefix (default: task):",
-						validate: (value) => {
-							const normalized = String(value ?? "").trim();
-							if (!normalized) {
-								return undefined;
-							}
-							if (!/^[a-zA-Z]+$/.test(normalized)) {
-								return "Task prefix must contain only letters (a-z, A-Z).";
-							}
-							return undefined;
-						},
+						// The prompt trims what it accepts below, so judge the trimmed value here too.
+						validate: (value) => getTaskPrefixError(String(value ?? "").trim()),
 					});
 					if (clack.isCancel(enteredPrefix)) {
 						abortInitialization();
@@ -1241,9 +1341,9 @@ addHelpSchema(program.command("init [projectName]"), {
 					}
 					taskPrefix = String(enteredPrefix ?? "").trim();
 				}
-				// Validate task prefix if provided
-				if (taskPrefix && !/^[a-zA-Z]+$/.test(taskPrefix)) {
-					console.error("Task prefix must contain only letters (a-z, A-Z).");
+				const taskPrefixError = getTaskPrefixError(taskPrefix ?? "");
+				if (taskPrefixError) {
+					console.error(taskPrefixError);
 					process.exit(1);
 				}
 
@@ -1785,7 +1885,8 @@ addHelpSchema(taskCmd.command("create [title]"), {
 		},
 		{ name: "priority", type: priorityType, description: "Task priority" },
 		{ name: "type", type: taskType, description: "Task type; case-insensitive" },
-		{ name: "due-date", type: "UTC datetime", description: "Optional due date and time" },
+		{ name: "project", type: projectType, description: "Task project; case-insensitive" },
+		{ name: "due-date", type: "date", description: "Optional due date (YYYY-MM-DD)" },
 		{ name: "acceptanceCriteria", type: "Markdown list item text", description: "Repeat --ac for multiple criteria" },
 		{ name: "ordinal", type: "Integer", description: "Non-negative manual ordering value" },
 		{ name: "parent", type: "Task ID", description: "Existing parent task for subtasks; not a milestone ID" },
@@ -1821,7 +1922,8 @@ addHelpSchema(taskCmd.command("create [title]"), {
 	.option("-l, --labels <labels>", "add task labels (comma-separated or repeatable)", createMultiValueAccumulator())
 	.option("--priority <priority>", "set task priority (configured priorities)")
 	.option("--type <type>", "set task type (configured task types)")
-	.option("--due-date <datetime>", "set due date as a UTC datetime")
+	.option("--project <project>", "set task project (configured projects)")
+	.option("--due-date <date>", "set due date (YYYY-MM-DD)")
 	.option("--plain", "use plain text output after creating")
 	.option("--ac <criteria>", "add acceptance criteria (can be used multiple times)", createMultiValueAccumulator())
 	.option(
@@ -1891,6 +1993,7 @@ addHelpSchema(taskCmd.command("create [title]"), {
 				statuses,
 				priorities: config?.priorities,
 				types: config?.types,
+				projects: config?.projects,
 			});
 			if (!wizardInput) {
 				clack.cancel("Task create cancelled.");
@@ -1950,6 +2053,7 @@ addHelpSchema(taskCmd.command("create [title]"), {
 				parentTaskId: options.parent ? String(options.parent) : undefined,
 				priority: options.priority ? String(options.priority) : undefined,
 				type: options.type !== undefined ? String(options.type) : undefined,
+				project: options.project !== undefined ? String(options.project) : undefined,
 				...(ordinalValue !== undefined ? { ordinal: ordinalValue } : {}),
 				milestone,
 				implementationPlan: options.plan ? String(options.plan) : undefined,
@@ -1961,7 +2065,7 @@ addHelpSchema(taskCmd.command("create [title]"), {
 			});
 
 			if (usePlainOutput) {
-				console.log(formatTaskPlainText(task, { filePathOverride: filePath }));
+				console.log(formatTaskPlainText(await loadTaskDetail(core, task), { filePathOverride: filePath }));
 				return;
 			}
 
@@ -2006,6 +2110,11 @@ addHelpSchema(program.command("search [query]"), {
 		},
 		{ name: "priority", type: priorityType, description: "Filter task results by priority" },
 		{
+			name: "project",
+			type: () => projectType({ multiple: true }),
+			description: "Filter task results by one or more configured projects; repeat or comma-separate values",
+		},
+		{
 			name: "modified-file",
 			type: "Project-root-relative path",
 			description: "Filter by modified file path substring",
@@ -2041,6 +2150,11 @@ addHelpSchema(program.command("search [query]"), {
 	)
 	.option("--priority <priority>", "filter task results by priority (configured priorities)")
 	.option(
+		"--project <project>",
+		"filter task results by configured project (repeatable or comma-separated)",
+		createMultiValueAccumulator(),
+	)
+	.option(
 		"--modified-file <path>",
 		"filter task results by modified file path substring",
 		createMultiValueAccumulator(),
@@ -2067,6 +2181,7 @@ addHelpSchema(program.command("search [query]"), {
 
 		const modifiedFileFilters = parseDelimitedStringList(options.modifiedFile);
 		const rawTaskTypes = parseDelimitedStringList(options.taskType) ?? [];
+		const rawSearchProjects = parseDelimitedStringList(options.project) ?? [];
 		const rawTypes = options.type ? (Array.isArray(options.type) ? options.type : [options.type]) : undefined;
 		const allowedTypes: SearchResultType[] = ["task", "document", "decision"];
 		const types = rawTypes
@@ -2079,11 +2194,17 @@ addHelpSchema(program.command("search [query]"), {
 						}
 						return true;
 					})
-			: modifiedFileFilters?.length || rawTaskTypes.length > 0
+			: modifiedFileFilters?.length || rawTaskTypes.length > 0 || rawSearchProjects.length > 0
 				? ["task"]
 				: allowedTypes;
 		if (rawTaskTypes.length > 0 && rawTypes && !types.includes("task")) {
 			console.error("--task-type filters task results. Include --type task or omit --type.");
+			cleanup();
+			process.exitCode = 1;
+			return;
+		}
+		if (rawSearchProjects.length > 0 && rawTypes && !types.includes("task")) {
+			console.error("--project filters task results. Include --type task or omit --type.");
 			cleanup();
 			process.exitCode = 1;
 			return;
@@ -2093,6 +2214,7 @@ addHelpSchema(program.command("search [query]"), {
 			status?: string | string[];
 			excludeStatus?: string[];
 			type?: string[];
+			project?: string[];
 			priority?: SearchPriorityFilter;
 			modifiedFiles?: string[];
 		} = {};
@@ -2115,6 +2237,14 @@ addHelpSchema(program.command("search [query]"), {
 				return;
 			}
 			filters.type = canonicalTaskTypes;
+		}
+		if (rawSearchProjects.length > 0) {
+			const canonicalProjects = await normalizeCliProjects(core, rawSearchProjects, "project");
+			if (!canonicalProjects) {
+				cleanup();
+				return;
+			}
+			filters.project = canonicalProjects;
 		}
 		if (options.priority) {
 			const priority = await normalizeCliPriority(core, String(options.priority));
@@ -2146,7 +2276,33 @@ addHelpSchema(program.command("search [query]"), {
 		});
 
 		if (outputMode === "json") {
-			printJson(searchJson(searchResults, cwd, core.filesystem.docsDir));
+			// Task results carry the same readiness verdict `task list --json` publishes, derived in one
+			// pass over the corpus for the results being printed. The projected rows are consumed in
+			// result order rather than looked up by ID, so two files claiming one ID keep the verdict
+			// derived for their own record instead of inheriting the other claimant's. A search that
+			// matched no task the formatter will emit reads no corpus: there is nothing for a verdict to
+			// describe. `searchJson` drops non-local results, so a cross-branch-only match is no match here.
+			const searchedTasks = searchResults.flatMap((result) =>
+				isTaskSearchResult(result) && isLocalEditableTask(result.task) ? [result.task] : [],
+			);
+			const projectedTaskRows = (searchedTasks.length > 0 ? await loadTaskListItems(core, searchedTasks) : [])[
+				Symbol.iterator
+			]();
+			const projectedResults: SearchResultInput[] = [];
+			for (const result of searchResults) {
+				if (!isTaskSearchResult(result)) {
+					projectedResults.push(result);
+					continue;
+				}
+				// `searchJson` drops non-local results, so they are neither projected nor emitted; skipping
+				// them here keeps each remaining result aligned with the row derived for it.
+				if (!isLocalEditableTask(result.task)) continue;
+				const projected = projectedTaskRows.next();
+				// One row per task result, in order, so this never runs out.
+				if (projected.done) break;
+				projectedResults.push({ ...result, task: projected.value });
+			}
+			printJson(searchJson(projectedResults, cwd, core.filesystem.docsDir));
 			cleanup();
 			return;
 		}
@@ -2171,6 +2327,10 @@ addHelpSchema(program.command("search [query]"), {
 			return;
 		}
 
+		// Only filters the interactive view cannot edit may narrow the set it loads. Modified-file
+		// filters have no in-view control, so the view would never be able to widen past them.
+		// Project does have one, and it is applied below as a view filter, so prefiltering here
+		// would leave clearing it in the picker unable to reveal anything it had excluded.
 		const requiresPrefilteredTaskSet = Boolean(modifiedFileFilters?.length);
 		const interactiveTasks = requiresPrefilteredTaskSet ? searchResultTasks : allTasks;
 		if (interactiveTasks.length === 0) {
@@ -2196,6 +2356,7 @@ addHelpSchema(program.command("search [query]"), {
 					status: statusFilter,
 					excludeStatus: filters.excludeStatus,
 					type: filters.type,
+					project: filters.project,
 					priority: priorityFilter,
 					query: query ?? "",
 					modifiedFiles: modifiedFileFilters ?? [],
@@ -2203,6 +2364,7 @@ addHelpSchema(program.command("search [query]"), {
 				status: statusFilter,
 				excludeStatus: filters.excludeStatus,
 				type: filters.type,
+				project: filters.project,
 				priority: priorityFilter,
 				searchQuery: query ?? "", // Pre-populate search with the query
 			},
@@ -2214,6 +2376,7 @@ function buildSearchFilterDescription(filters: {
 	status?: string | string[];
 	excludeStatus?: string[];
 	type?: string[];
+	project?: string[];
 	priority?: SearchPriorityFilter;
 	query?: string;
 	modifiedFiles?: string[];
@@ -2231,6 +2394,9 @@ function buildSearchFilterDescription(filters: {
 	}
 	if (filters.type?.length) {
 		parts.push(`Type: ${filters.type.join(", ")}`);
+	}
+	if (filters.project?.length) {
+		parts.push(`Project: ${filters.project.join(", ")}`);
 	}
 	if (filters.priority) {
 		parts.push(`Priority: ${filters.priority}`);
@@ -2395,6 +2561,11 @@ addHelpSchema(taskCmd.command("list"), {
 			description: "Filter by one or more configured task types; repeat or comma-separate values",
 		},
 		{
+			name: "project",
+			type: () => projectType({ multiple: true }),
+			description: "Filter by one or more configured projects; repeat or comma-separate values",
+		},
+		{
 			name: "labels",
 			type: "Comma-separated strings",
 			description: "Require every listed label; repeat --labels or use label1,label2",
@@ -2435,6 +2606,11 @@ addHelpSchema(taskCmd.command("list"), {
 	.option(
 		"--type <type>",
 		"filter tasks by configured task type (repeatable or comma-separated)",
+		createMultiValueAccumulator(),
+	)
+	.option(
+		"--project <project>",
+		"filter tasks by configured project (repeatable or comma-separated)",
 		createMultiValueAccumulator(),
 	)
 	.option(
@@ -2507,8 +2683,22 @@ addHelpSchema(taskCmd.command("list"), {
 			}
 			baseFilters.type = canonicalTaskTypes;
 		}
+		const rawProjects = parseDelimitedStringList(options.project) ?? [];
+		if (rawProjects.length > 0) {
+			const canonicalProjects = await normalizeCliProjects(core, rawProjects, "project");
+			if (!canonicalProjects) {
+				cleanup();
+				return;
+			}
+			baseFilters.project = canonicalProjects;
+		}
 
 		const labelFilters = parseDelimitedStringList(options.labels) ?? [];
+		if (labelFilters.length > 0) {
+			// `--labels` is documented as requiring every listed label.
+			baseFilters.labels = labelFilters;
+			baseFilters.labelMatch = "all";
+		}
 		const searchQuery = typeof options.search === "string" ? options.search.trim() : "";
 		let taskLimit: number | undefined;
 		if (options.limit !== undefined) {
@@ -2563,47 +2753,50 @@ addHelpSchema(taskCmd.command("list"), {
 				baseFilters.parentTaskId = resolvedParentId;
 			}
 
-			let tasks = await core.queryTasks({
+			const tasks = await core.queryTasks({
 				query: searchQuery || undefined,
 				filters: Object.keys(baseFilters).length > 0 ? baseFilters : undefined,
 				includeCrossBranch: false,
 			});
 			const config = await core.filesystem.loadConfig();
 
-			if (options.ready) {
-				const readinessGraph = await loadReadinessGraph(core);
-				tasks = tasks.filter((task) => getTaskReadiness(task, readinessGraph).isReady);
-			}
+			// Ordering, the parent narrowing and the limit are the same whatever the rows carry, so the
+			// readiness projection below travels through them instead of being derived twice.
+			const parentFilter = resolvedParentId;
+			// The sort field was validated above, before any task was read.
+			const sortField = options.sort ? options.sort.toLowerCase() : "priority";
+			const narrowForDisplay = <T extends Task>(rows: T[]): { filtered: T[]; display: T[] } => {
+				const sorted = sortTasks(rows, sortField, config?.priorities);
+				const narrowed = parentFilter
+					? sorted.filter((task) => task.parentTaskId && taskIdsEqual(parentFilter, task.parentTaskId))
+					: sorted;
+				return { filtered: narrowed, display: taskLimit !== undefined ? narrowed.slice(0, taskLimit) : narrowed };
+			};
 
-			let sortedTasks = tasks;
-			if (options.sort) {
-				const sortField = options.sort.toLowerCase();
-				if (!TASK_SORT_FIELDS.includes(sortField)) {
-					console.error(`Invalid sort field: ${options.sort}. Valid values are: ${TASK_SORT_FIELD_LIST}`);
-					process.exitCode = 1;
+			// Readiness needs the completed corpus, so only the reads that use it pay for one: --ready
+			// filters on the verdict and --json publishes it. Both read it once, from the same pass, so
+			// a row selected as ready can never be serialized from a second, later verdict. A read that
+			// matched nothing describes nothing, so it reads no corpus at all.
+			const derivesReadiness = Boolean(options.ready) || outputMode === "json";
+			const readinessRows = derivesReadiness && tasks.length > 0 ? await loadTaskListItems(core, tasks) : null;
+
+			let filtered: Task[];
+			let displayTasks: Task[];
+			if (derivesReadiness) {
+				const projected = readinessRows ?? [];
+				const rows = options.ready ? projected.filter((row) => row.isReady) : projected;
+				const narrowed = narrowForDisplay(rows);
+				if (outputMode === "json") {
+					printJson(taskListJson(narrowed.display));
 					cleanup();
 					return;
 				}
-				sortedTasks = sortTasks(tasks, sortField, config?.priorities);
+				filtered = narrowed.filtered;
+				displayTasks = narrowed.display;
 			} else {
-				sortedTasks = sortTasks(tasks, "priority", config?.priorities);
-			}
-
-			let filtered = sortedTasks;
-			if (resolvedParentId) {
-				const parent = resolvedParentId;
-				filtered = filtered.filter((task) => task.parentTaskId && taskIdsEqual(parent, task.parentTaskId));
-			}
-			if (labelFilters.length > 0) {
-				filtered = filtered.filter((task) => taskMatchesAllLabels(task, labelFilters));
-			}
-
-			const displayTasks = taskLimit !== undefined ? filtered.slice(0, taskLimit) : filtered;
-
-			if (outputMode === "json") {
-				printJson(taskListJson(displayTasks));
-				cleanup();
-				return;
+				const narrowed = narrowForDisplay(tasks);
+				filtered = narrowed.filtered;
+				displayTasks = narrowed.display;
 			}
 
 			if (filtered.length === 0) {
@@ -2680,6 +2873,10 @@ addHelpSchema(taskCmd.command("list"), {
 			const taskTypes = Array.isArray(baseFilters.type) ? baseFilters.type : [baseFilters.type];
 			activeFilters.push(`Type: ${taskTypes.join(", ")}`);
 		}
+		if (baseFilters.project) {
+			const projects = Array.isArray(baseFilters.project) ? baseFilters.project : [baseFilters.project];
+			activeFilters.push(`Project: ${projects.join(", ")}`);
+		}
 		if (labelFilters.length > 0) activeFilters.push(`Labels: ${labelFilters.join(", ")}`);
 		if (searchQuery) activeFilters.push(`Search: ${searchQuery}`);
 		if (taskLimit !== undefined) activeFilters.push(`Limit: ${taskLimit}`);
@@ -2695,6 +2892,7 @@ addHelpSchema(taskCmd.command("list"), {
 			assignee?: string;
 			milestone?: string;
 			type?: string[];
+			project?: string[];
 			priority?: string;
 			sort?: string;
 			labels?: string[];
@@ -2711,6 +2909,11 @@ addHelpSchema(taskCmd.command("list"), {
 			assignee: options.assignee,
 			milestone: options.milestone,
 			type: Array.isArray(baseFilters.type) ? baseFilters.type : baseFilters.type ? [baseFilters.type] : undefined,
+			project: Array.isArray(baseFilters.project)
+				? baseFilters.project
+				: baseFilters.project
+					? [baseFilters.project]
+					: undefined,
 			priority: baseFilters.priority,
 			sort: options.sort,
 			labels: labelFilters,
@@ -2736,6 +2939,9 @@ addHelpSchema(taskCmd.command("list"), {
 		if (parentId) {
 			interactiveLoaderFilters.parentTaskId = parentId;
 		}
+		// Assignee and parent stay loader filters because the view has no control for them.
+		// Project deliberately does not: it travels in initialUnifiedFilter instead, so the
+		// picker can widen it again. Loading a project-narrowed set would make that a no-op.
 		const prefiltersDisplayList = Object.keys(interactiveLoaderFilters).length > 0;
 		await runUnifiedView({
 			core,
@@ -2848,11 +3054,42 @@ const draftEditTarget: EditCommandTarget = {
 	notFoundMessage: (id) => `Draft ${id} not found.`,
 };
 
-async function runEditCommand(target: EditCommandTarget, taskId: string | undefined, options: OptionValues) {
+async function runEditCommand(target: EditCommandTarget, requestedIds: string[] | undefined, options: OptionValues) {
+	// Listing the same task twice is a slip, not a request to edit it twice, so identities that
+	// compare equal collapse to the first spelling the user typed. Canonical identity keeps a bare
+	// number on the default prefix, so "7" cannot swallow an explicit "JIRA-7".
+	const taskIds: string[] = [];
+	for (const value of requestedIds ?? []) {
+		const trimmed = String(value).trim();
+		if (!trimmed) continue;
+		if (taskIds.some((seen) => canonicalTaskId(seen) === canonicalTaskId(trimmed))) continue;
+		taskIds.push(trimmed);
+	}
+	const taskId = taskIds[0];
 	const shouldUseWizard = hasInteractiveTTY && !hasEditFieldFlags(options);
 	if (!shouldUseWizard && !taskId) {
 		printMissingRequiredArgument("taskId");
 		return;
+	}
+
+	if (taskIds.length > 1) {
+		// These two guards run whether or not a terminal is attached: a batch means the same value is
+		// written to every listed task, so a batch the CLI cannot apply must fail the same way in a
+		// script and in a terminal rather than quietly becoming a wizard over the first ID.
+		// --plain only chooses an output shape, so it never counts as a change to apply.
+		if (!hasEditFieldFlags({ ...options, plain: undefined })) {
+			console.error(
+				`Cannot edit ${taskIds.length} ${target.pluralLabel} without any field flag. Pass the change to apply to every ${target.label.toLowerCase()}, for example --status "In Progress", or edit one ${target.label.toLowerCase()} at a time to use the interactive editor.`,
+			);
+			process.exitCode = 1;
+			return;
+		}
+		const perTaskFlagError = findPerTaskOnlyFlag(options);
+		if (perTaskFlagError) {
+			console.error(perTaskFlagError);
+			process.exitCode = 1;
+			return;
+		}
 	}
 
 	const cwd = await requireProjectRoot();
@@ -2892,6 +3129,7 @@ async function runEditCommand(target: EditCommandTarget, taskId: string | undefi
 			statuses,
 			priorities: config?.priorities,
 			types: config?.types,
+			projects: config?.projects,
 		});
 		if (!wizardInput) {
 			clack.cancel(`${target.label} edit cancelled.`);
@@ -2908,10 +3146,32 @@ async function runEditCommand(target: EditCommandTarget, taskId: string | undefi
 		return;
 	}
 
-	const existingTask = await target.resolve(core, taskId ?? "");
+	// Resolve every listed ID first so an unresolvable or ambiguous ID is reported as its own failure
+	// instead of aborting the tasks that did resolve. A single ID keeps the original one-error output.
+	const resolvedTasks: Task[] = [];
+	const editFailures: Array<{ taskId: string; message: string }> = [];
+	for (const requestedId of taskIds) {
+		try {
+			const loaded = await target.resolve(core, requestedId);
+			// Under a custom prefix, a bare number is an alias the pre-resolution dedup cannot see
+			// ("7" and "BACK-7"), so the resolved identity is the last line of defense against
+			// editing the same task twice.
+			if (loaded && resolvedTasks.some((seen) => seen.id === loaded.id)) continue;
+			if (loaded) resolvedTasks.push(loaded);
+			else editFailures.push({ taskId: requestedId, message: target.notFoundMessage(requestedId) });
+		} catch (error) {
+			editFailures.push({
+				taskId: requestedId,
+				message: formatTaskEditError(error, requestedId, target.label.toLowerCase()),
+			});
+		}
+	}
 
+	const existingTask = resolvedTasks[0];
 	if (!existingTask) {
-		console.error(target.notFoundMessage(taskId ?? ""));
+		for (const failure of editFailures) {
+			console.error(failure.message);
+		}
 		process.exitCode = 1;
 		return;
 	}
@@ -3104,6 +3364,9 @@ async function runEditCommand(target: EditCommandTarget, taskId: string | undefi
 	if (options.type !== undefined) {
 		editArgs.type = String(options.type);
 	}
+	if (options.project !== undefined) {
+		editArgs.project = String(options.project);
+	}
 	if (ordinalValue !== undefined) {
 		editArgs.ordinal = ordinalValue;
 	}
@@ -3210,23 +3473,43 @@ async function runEditCommand(target: EditCommandTarget, taskId: string | undefi
 		editArgs.definitionOfDoneUncheck = uncheckDod;
 	}
 
-	let updatedTask: Task;
-	try {
-		const updateInput = buildTaskUpdateInput(editArgs);
-		updatedTask = await target.update(core, existingTask, updateInput);
-	} catch (error) {
-		console.error(formatTaskEditError(error, existingTask.id, target.label.toLowerCase()));
+	if (taskIds.length === 1) {
+		let updatedTask: Task;
+		try {
+			updatedTask = await target.update(core, existingTask, buildTaskUpdateInput(editArgs));
+		} catch (error) {
+			console.error(formatTaskEditError(error, existingTask.id, target.label.toLowerCase()));
+			process.exitCode = 1;
+			return;
+		}
+
+		if (isPlainRequested(options)) {
+			console.log(formatTaskPlainText(await loadTaskDetail(core, updatedTask)));
+			return;
+		}
+
+		console.log(`Updated ${target.label.toLowerCase()} ${updatedTask.id}`);
+		return;
+	}
+
+	// A batch writes the same change to independent files, so one failure must not stop the rest.
+	// The outcome of each task is the useful output here, so a batch reports one line per task
+	// rather than repeating a full task body for every ID.
+	for (const task of resolvedTasks) {
+		try {
+			const updated = await target.update(core, task, buildTaskUpdateInput(editArgs));
+			console.log(`Updated ${target.label.toLowerCase()} ${updated.id}`);
+		} catch (error) {
+			editFailures.push({ taskId: task.id, message: formatTaskEditError(error, task.id, target.label.toLowerCase()) });
+		}
+	}
+
+	for (const failure of editFailures) {
+		console.error(`Failed to update ${failure.taskId}: ${failure.message}`);
+	}
+	if (editFailures.length > 0) {
 		process.exitCode = 1;
-		return;
 	}
-
-	const usePlainOutput = isPlainRequested(options);
-	if (usePlainOutput) {
-		console.log(formatTaskPlainText(updatedTask));
-		return;
-	}
-
-	console.log(`Updated ${target.label.toLowerCase()} ${updatedTask.id}`);
 }
 
 function addEditFieldOptions(cmd: Command) {
@@ -3247,7 +3530,8 @@ function addEditFieldOptions(cmd: Command) {
 		)
 		.option("--priority <priority>", "set task priority (configured priorities)")
 		.option("--type <type>", "set task type (configured task types; pass an empty value to clear)")
-		.option("--due-date <datetime>", "set due date as a UTC datetime")
+		.option("--project <project>", "set task project (configured projects; pass an empty value to clear)")
+		.option("--due-date <date>", "set due date (YYYY-MM-DD)")
 		.option("--clear-due-date", "clear task due date")
 		.option("--ordinal <number>", "set task ordinal for custom ordering")
 		.option("-m, --milestone <milestone>", "assign task to milestone by ID or title")
@@ -3375,16 +3659,26 @@ function addEditFieldOptions(cmd: Command) {
 		.option("--clear-docs", "remove all documentation (cannot combine with --doc)");
 }
 
-const taskEditCommand = addHelpSchema(taskCmd.command("edit [taskId]"), {
+const taskEditCommand = addHelpSchema(taskCmd.command("edit [taskIds...]"), {
 	required: [
-		{ name: "taskId", type: "Task ID", description: "Task to update; prompted when omitted in interactive mode" },
+		{
+			name: "taskIds",
+			type: "Task IDs",
+			description:
+				"Tasks to update; prompted when omitted in interactive mode. Several IDs apply the same shared-field change to every task",
+		},
 	],
 	optional: [
 		{ name: "title", type: "String", description: "Replacement task title" },
 		{ name: "description", type: "Markdown", description: "Replacement description" },
 		{ name: "status", type: statusType, description: "Project task status; case-insensitive" },
 		{ name: "type", type: taskType, description: "Replacement task type; case-insensitive" },
-		{ name: "due-date", type: "UTC datetime", description: "Set the task due date and time" },
+		{
+			name: "project",
+			type: projectType,
+			description: "Replacement task project; case-insensitive; pass an empty value to clear",
+		},
+		{ name: "due-date", type: "date", description: "Set the task due date (YYYY-MM-DD)" },
 		{ name: "clear-due-date", type: "Boolean", description: "Clear the task due date" },
 		{
 			name: "assignee",
@@ -3455,10 +3749,11 @@ const taskEditCommand = addHelpSchema(taskCmd.command("edit [taskId]"), {
 		'backlog task edit {{TASK_ID:1}} --status "<active status>" -a @sara',
 		`backlog task edit {{TASK_ID:1}} --type ${TASK_TYPE_EXAMPLE}`,
 		"backlog task edit {{TASK_ID:1}} --check-ac 1",
+		'backlog task edit {{TASK_ID:1}} {{TASK_ID:2}} --status "<active status>"',
 	],
 }).description("edit an existing task");
-addEditFieldOptions(taskEditCommand).action(async (taskId: string | undefined, options) => {
-	await runEditCommand(taskEditTarget, taskId, options);
+addEditFieldOptions(taskEditCommand).action(async (taskIds: string[] | undefined, options) => {
+	await runEditCommand(taskEditTarget, taskIds, options);
 });
 
 // Note: Implementation notes appending is handled via `task edit --append-notes` only.
@@ -3495,12 +3790,12 @@ addHelpSchema(taskCmd.command("view <taskId>"), {
 
 		// Plain text output for non-interactive environments
 		if (outputMode === "json") {
-			printJson(taskViewJson(task, cwd));
+			printJson(taskViewJson(await loadTaskDetail(core, task), cwd));
 			return;
 		}
 
 		if (outputMode === "plain") {
-			console.log(formatTaskPlainText(task));
+			console.log(formatTaskPlainText(await loadTaskDetail(core, task)));
 			return;
 		}
 
@@ -3543,9 +3838,13 @@ addHelpSchema(taskCmd.command("archive <taskId>"), {
 			return;
 		}
 
-		const success = await core.archiveTask(task.id, undefined, { includeCrossBranch: false });
+		const { success, cleanedTaskIds } = await core.archiveTask(task.id, undefined, { includeCrossBranch: false });
 		if (success) {
 			console.log(`Archived task ${task.id}`);
+			const cleanupMessage = formatDependencyCleanupMessage(task.id, cleanedTaskIds);
+			if (cleanupMessage) {
+				console.log(cleanupMessage);
+			}
 		} else {
 			console.error(`Failed to archive task: ${task.id}`);
 			process.exitCode = 1;
@@ -3621,8 +3920,13 @@ taskCmd
 		const core = new Core(cwd);
 		try {
 			const task = await core.loadTaskById(taskId, { includeCrossBranch: false });
-			if (task && (await core.demoteTask(task.id, undefined, { includeCrossBranch: false }))) {
+			const demotion = task ? await core.demoteTask(task.id, undefined, { includeCrossBranch: false }) : null;
+			if (task && demotion?.success) {
 				console.log(`Demoted task ${task.id}`);
+				const cleanupMessage = formatDependencyCleanupMessage(task.id, demotion.cleanedTaskIds);
+				if (cleanupMessage) {
+					console.log(cleanupMessage);
+				}
 			} else {
 				console.error(`Task ${taskId} not found. ${LOCAL_TASK_LOOKUP_HINT}`);
 				process.exitCode = 1;
@@ -3671,12 +3975,12 @@ taskCmd
 
 		// Plain text output for non-interactive environments
 		if (outputMode === "json") {
-			printJson(taskViewJson(task, cwd));
+			printJson(taskViewJson(await loadTaskDetail(core, task), cwd));
 			return;
 		}
 
 		if (outputMode === "plain") {
-			console.log(formatTaskPlainText(task));
+			console.log(formatTaskPlainText(await loadTaskDetail(core, task)));
 			return;
 		}
 
@@ -3699,7 +4003,7 @@ async function viewDraftById(core: Core, taskId: string, options?: { plain?: boo
 		}
 		const usePlainOutput = isPlainRequested(options) || shouldAutoPlain;
 		if (usePlainOutput) {
-			console.log(formatTaskPlainText(draft));
+			console.log(formatTaskPlainText(await loadTaskDetail(core, draft)));
 			return;
 		}
 		await viewTaskEnhanced(draft, { startWithDetailFocus: true, core });
@@ -3816,7 +4120,12 @@ const draftEditCommand = addHelpSchema(draftCmd.command("edit [taskId]"), {
 		{ name: "description", type: "Markdown", description: "Replacement description" },
 		{ name: "status", type: "String", description: 'Only "Draft" is valid; drafts cannot change status' },
 		{ name: "type", type: taskType, description: "Replacement task type; case-insensitive" },
-		{ name: "due-date", type: "UTC datetime", description: "Set the due date and time" },
+		{
+			name: "project",
+			type: projectType,
+			description: "Replacement task project; case-insensitive; pass an empty value to clear",
+		},
+		{ name: "due-date", type: "date", description: "Set the due date (YYYY-MM-DD)" },
 		{ name: "clear-due-date", type: "Boolean", description: "Clear the due date" },
 		{
 			name: "assignee",
@@ -3867,7 +4176,7 @@ const draftEditCommand = addHelpSchema(draftCmd.command("edit [taskId]"), {
 	examples: ['backlog draft edit DRAFT-1 -t "Renamed draft"', "backlog draft edit DRAFT-1 --check-ac 1"],
 }).description("edit an existing draft");
 addEditFieldOptions(draftEditCommand).action(async (taskId: string | undefined, options) => {
-	await runEditCommand(draftEditTarget, taskId, options);
+	await runEditCommand(draftEditTarget, taskId ? [taskId] : [], options);
 });
 
 draftCmd
@@ -3974,9 +4283,7 @@ addHelpSchema(milestoneCmd.command("list"), {
 			const milestone = [...milestones, ...archivedMilestones].find(
 				(candidate) => milestoneKey(candidate.id) === milestoneKey(id),
 			);
-			const dueDate = milestone?.dueDate
-				? `, due ${formatUtcDateForDisplay(milestone.dueDate, { appendUtcLabel: true })}`
-				: "";
+			const dueDate = milestone?.dueDate ? `, due ${formatUtcDateForDisplay(milestone.dueDate)}` : "";
 			return `  ${id}: ${label} (${bucket.doneCount}/${bucket.total} done${dueDate})`;
 		};
 
@@ -4006,7 +4313,7 @@ addHelpSchema(milestoneCmd.command("add <name>"), {
 	required: [{ name: "name", type: "String", description: "Milestone name/title, trimmed before storage" }],
 	optional: [
 		{ name: "description", type: "Markdown", description: "Optional milestone description" },
-		{ name: "due-date", type: "UTC datetime", description: "Optional milestone due date and time" },
+		{ name: "due-date", type: "date", description: "Optional milestone due date (YYYY-MM-DD)" },
 	],
 	writes: "Creates a milestone markdown file in the active milestones directory",
 	output: "Created milestone title and ID",
@@ -4014,7 +4321,7 @@ addHelpSchema(milestoneCmd.command("add <name>"), {
 })
 	.description("add a milestone file")
 	.option("-d, --description <text>", "milestone description")
-	.option("--due-date <datetime>", "set due date as a UTC datetime")
+	.option("--due-date <date>", "set due date (YYYY-MM-DD)")
 	.action(async (name: string, options: { description?: string; dueDate?: string }) => {
 		await runMilestoneMutation((handlers) =>
 			handlers.addMilestone({ name, description: options.description, dueDate: options.dueDate }),
@@ -4033,7 +4340,7 @@ addHelpSchema(milestoneCmd.command("rename <from> <to>"), {
 			type: "Boolean",
 			description: "Update local task milestone references; default true, disable with --no-update-tasks",
 		},
-		{ name: "due-date", type: "UTC datetime", description: "Set the milestone due date and time" },
+		{ name: "due-date", type: "date", description: "Set the milestone due date (YYYY-MM-DD)" },
 		{ name: "clear-due-date", type: "Boolean", description: "Clear the milestone due date" },
 	],
 	writes: "Renames the milestone file and, by default, updates matching local task milestone values",
@@ -4045,7 +4352,7 @@ addHelpSchema(milestoneCmd.command("rename <from> <to>"), {
 })
 	.description("rename a milestone file and update local tasks by default")
 	.option("--no-update-tasks", "do not update local tasks that reference the milestone")
-	.option("--due-date <datetime>", "set due date as a UTC datetime")
+	.option("--due-date <date>", "set due date (YYYY-MM-DD)")
 	.option("--clear-due-date", "clear milestone due date")
 	.action(
 		async (from: string, to: string, options: { updateTasks?: boolean; dueDate?: string; clearDueDate?: boolean }) => {
@@ -4679,7 +4986,7 @@ agentsCmd
 
 // Config command group
 const CONFIG_AVAILABLE_KEYS =
-	"Available keys: defaultEditor, projectName, defaultAssignee, defaultStatus, statuses, labels, priorities, types, milestones, definitionOfDone, dateFormat, relativeDueDates, maxColumnWidth, taskListPaneWidth, documentBaseUrl, defaultPort, autoOpenBrowser, hideEmptyColumns, remoteOperations, autoCommit, guardedTaskSync, guardedTaskPublish, logGitActions, filesystemOnly, bypassGitHooks, zeroPaddedIds, checkActiveBranches, activeBranchDays";
+	"Available keys: defaultEditor, projectName, defaultAssignee, defaultStatus, statuses, labels, priorities, types, projects, milestones, definitionOfDone, dateFormat, relativeDueDates, maxColumnWidth, taskListPaneWidth, documentBaseUrl, defaultPort, autoOpenBrowser, hideEmptyColumns, remoteOperations, autoCommit, guardedTaskSync, guardedTaskPublish, logGitActions, filesystemOnly, bypassGitHooks, zeroPaddedIds, checkActiveBranches, activeBranchDays";
 
 const configCmd = addHelpSchema(program.command("config"), {
 	reads: "Project Backlog.md configuration",
@@ -4826,6 +5133,9 @@ addHelpSchema(configCmd.command("get <key>"), {
 					break;
 				case "types":
 					console.log(getTaskTypeValues(config).join(", "));
+					break;
+				case "projects":
+					console.log(getProjectValues(config).join(", "));
 					break;
 				case "milestones": {
 					const milestones = await core.filesystem.listMilestones();
@@ -5169,6 +5479,7 @@ addHelpSchema(configCmd.command("set <key> <value>"), {
 				case "labels":
 				case "types":
 				case "priorities":
+				case "projects":
 				case "milestones":
 				case "definitionOfDone":
 					if (key === "milestones") {
@@ -5242,6 +5553,7 @@ addHelpSchema(configCmd.command("list"), {
 					.join(", ")}]`,
 			);
 			console.log(`  types: [${getTaskTypeValues(config).join(", ")}]`);
+			console.log(`  projects: [${getProjectValues(config).join(", ")}]`);
 			const milestones = await core.filesystem.listMilestones();
 			console.log(`  milestones: [${milestones.map((milestone) => milestone.id).join(", ")}]`);
 			console.log(`  definitionOfDone: [${(config.definitionOfDone ?? []).join(", ")}]`);
@@ -5278,10 +5590,12 @@ addHelpSchema(program.command("doctor"), {
 	writes:
 		"With --fix, atomically renames duplicate task files and updates only their frontmatter IDs; ambiguous references are reported for human review",
 	output:
-		"Duplicate-ID diagnosis for tasks, documents, decisions, and drafts, a deterministic task repair preview, and a reference-review report",
+		"Duplicate-ID diagnosis for tasks, documents, decisions, and drafts, a deterministic task repair preview, a reference-review report, and a report of self-referential and cyclic task dependencies",
 	examples: ["backlog doctor", "backlog doctor --fix", "backlog doctor --fix --yes"],
 })
-	.description("diagnose duplicate task, document, and decision IDs and safely repair duplicate task IDs")
+	.description(
+		"diagnose duplicate task, document, and decision IDs, report self-referential and cyclic dependencies, and safely repair duplicate task IDs",
+	)
 	.option("--fix", "apply the displayed duplicate task ID repair")
 	.option("--yes", "confirm --fix without prompting")
 	.action(async (options: { fix?: boolean; yes?: boolean }) => {
@@ -5294,24 +5608,47 @@ addHelpSchema(program.command("doctor"), {
 		const cwd = await requireProjectRoot();
 		const core = new Core(cwd);
 		try {
+			const config = await core.filesystem.loadConfig();
+			const taskPrefix = config?.prefixes?.task;
+			const reservedTaskPrefix = taskPrefix && isReservedTaskPrefix(taskPrefix) ? taskPrefix : null;
+			if (reservedTaskPrefix) {
+				console.error(
+					`Task prefix "${reservedTaskPrefix}" collides with a reserved prefix (draft, doc, decision); tasks are misrouted as that entity type.`,
+				);
+				console.error(
+					"There is no automated migration. Rename the affected task files and IDs to a non-reserved prefix, then set task_prefix in the project config file to match.",
+				);
+				process.exitCode = 1;
+				if (options.fix) {
+					console.error("Resolve the reserved task prefix before running --fix.");
+					return;
+				}
+			}
+
 			const plan = await core.previewDuplicateTaskIdRepair({ includeBranches: true });
 			const contentIdentity = await core.diagnoseContentIdentity();
 			const contentIdentityBroken = hasContentIdentityIssues(contentIdentity);
 			const draftIdentity = await core.filesystem.diagnoseDraftIdentity();
 			const draftIdentityBroken = hasDraftIdentityFindings(draftIdentity);
+			const dependencyDefects = await findDependencyDefects(core);
+			const dependenciesBroken = dependencyDefects.selfDependencies.length > 0 || dependencyDefects.cycles.length > 0;
 			if (
 				plan.groups.length === 0 &&
 				plan.crossBranchFindings.length === 0 &&
 				!contentIdentityBroken &&
-				!draftIdentityBroken
+				!draftIdentityBroken &&
+				!dependenciesBroken
 			) {
-				console.log("No duplicate task, document, decision, or draft IDs found.");
+				if (!reservedTaskPrefix) {
+					console.log("No duplicate IDs, self-referential dependencies, or dependency cycles found.");
+				}
 				return;
 			}
 
 			printDuplicateRepairPlan(plan);
 			printContentIdentityReport(contentIdentity);
 			printDraftIdentityReport(draftIdentity);
+			printDependencyDefectsReport(dependencyDefects);
 			if (!options.fix) {
 				if (plan.groups.length > 0 && plan.repairable) {
 					console.log("\nRun 'backlog doctor --fix' to apply this repair after reviewing the preview.");
@@ -5372,6 +5709,15 @@ addHelpSchema(program.command("doctor"), {
 			}
 			if (draftIdentityBroken) {
 				console.log("Draft identity findings remain diagnostic-only and still require manual review.");
+				process.exitCode = 1;
+			}
+			// Diagnosed again after the repair: renaming a duplicate can resolve a dependency finding
+			// or materialize a new one from a dangling reference, so the report and final status must
+			// reflect the repaired corpus, not the preview snapshot.
+			const remainingDependencyDefects = await findDependencyDefects(core);
+			if (remainingDependencyDefects.selfDependencies.length > 0 || remainingDependencyDefects.cycles.length > 0) {
+				printDependencyDefectsReport(remainingDependencyDefects);
+				console.log("Dependency findings remain diagnostic-only and still require manual repair.");
 				process.exitCode = 1;
 			}
 		} catch (error) {

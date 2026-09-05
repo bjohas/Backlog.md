@@ -8,6 +8,7 @@ import { watchConfigFile } from "../utils/config-watcher.ts";
 import { documentIdKey, documentIdsEqual } from "../utils/document-id.ts";
 import { normalizeDocumentRelativePath } from "../utils/document-path.ts";
 import { normalizePriorityValue } from "../utils/priority-config.ts";
+import { matchesProjectFilter } from "../utils/project-config.ts";
 import { normalizeStatusSet, statusMatchesSet } from "../utils/status-filter.ts";
 import { canonicalTaskId, normalizeTaskId, normalizeTaskIdentity, taskIdsEqual } from "../utils/task-path.ts";
 import { sortByTaskId } from "../utils/task-sorting.ts";
@@ -30,6 +31,8 @@ export interface TaskCorpusSnapshot {
 
 type TaskLoaderResult = Task[] | TaskCorpusSnapshot;
 type ProgressCallback = (message: string) => void;
+/** publish: false requests a load whose result must not be installed as shared cross-branch state. */
+type TaskLoaderOptions = { publish?: boolean };
 
 interface ContentSnapshot {
 	tasks: Task[];
@@ -167,7 +170,10 @@ export class ContentStore {
 
 	constructor(
 		private readonly filesystem: FileSystem,
-		private readonly taskLoader?: (progressCallback?: ProgressCallback) => Promise<TaskLoaderResult>,
+		private readonly taskLoader?: (
+			progressCallback?: ProgressCallback,
+			options?: TaskLoaderOptions,
+		) => Promise<TaskLoaderResult>,
 		private readonly enableWatchers = false,
 	) {
 		this.publishedRoot = this.currentRoot();
@@ -311,6 +317,9 @@ export class ContentStore {
 		if (filter?.type) {
 			tasks = tasks.filter((task) => matchesTaskTypeFilter(task.type, filter.type));
 		}
+		if (filter?.project) {
+			tasks = tasks.filter((task) => matchesProjectFilter(task.project, filter.project));
+		}
 		if (filter?.assignee) {
 			const assignee = filter.assignee;
 			tasks = tasks.filter((task) => task.assignee.includes(assignee));
@@ -441,6 +450,38 @@ export class ContentStore {
 		)
 			return;
 		const normalizedId = normalizeTaskId(taskId);
+		this.nextContentItemGeneration("tasks", normalizedId);
+		this.nextContentItemVersion("tasks", normalizedId, this.currentRoot());
+		this.activeTasks = activeTasks;
+		this.completedTasks = completedTasks;
+		if (this.taskIdentityIndex) {
+			this.taskIdentityIndex = this.taskIdentityIndex.withWorkingCopyCorpus(this.activeTasks, this.completedTasks);
+			this.replaceVisibleTasks(this.taskIdentityIndex.getTasks(false));
+		} else {
+			this.replaceVisibleTasks(this.activeTasks);
+		}
+		this.publishTaskChange();
+	}
+
+	/**
+	 * Republish one record that stays in the completed corpus, keyed by its file path.
+	 *
+	 * Not {@link transitionTask}: that one clears an identity out of both corpora, which is right
+	 * for a record that just left the active one, but here it would also evict a *different* file
+	 * claiming the same ID. A contested identity must stay contested - dissolving it would let a
+	 * later read report one of the claimants as simply missing - so this touches only the entries
+	 * holding this path, including the active copy the shared save publication writes for any file.
+	 */
+	refreshCompletedTask(task: Task): void {
+		if (!this.canPublishContent()) return;
+		const filePath = task.filePath;
+		if (!filePath) return;
+
+		const activeTasks = this.activeTasks.filter((candidate) => candidate.filePath !== filePath);
+		const completedTasks = this.completedTasks.filter((candidate) => candidate.filePath !== filePath);
+		completedTasks.push({ ...task, source: "completed" });
+
+		const normalizedId = normalizeTaskId(task.id);
 		this.nextContentItemGeneration("tasks", normalizedId);
 		this.nextContentItemVersion("tasks", normalizedId, this.currentRoot());
 		this.activeTasks = activeTasks;
@@ -1089,8 +1130,10 @@ export class ContentStore {
 							);
 							if (local.state !== "absent" || !this.taskLoader) return local;
 							try {
-								const matches = (await this.loadTasksWithLoader()).activeTasks.filter((task) =>
-									taskIdsEqual(task.id, normalizedTaskId),
+								// This load exists only to resolve one task's identity and is discarded
+								// afterward, so it must not publish shared cross-branch freshness state.
+								const matches = (await this.loadTasksWithLoader(undefined, { publish: false })).activeTasks.filter(
+									(task) => taskIdsEqual(task.id, normalizedTaskId),
 								);
 								if (matches.length === 0) return { state: "absent" };
 								if (matches.length !== 1) return { state: "incomplete" };
@@ -2087,9 +2130,12 @@ export class ContentStore {
 		});
 	}
 
-	private async loadTasksWithLoader(progressCallback?: ProgressCallback): Promise<TaskCorpusSnapshot> {
+	private async loadTasksWithLoader(
+		progressCallback?: ProgressCallback,
+		options?: TaskLoaderOptions,
+	): Promise<TaskCorpusSnapshot> {
 		if (this.taskLoader) {
-			const loaded = await this.taskLoader(progressCallback);
+			const loaded = await this.taskLoader(progressCallback, options);
 			return Array.isArray(loaded) ? this.asTaskCorpus(loaded) : loaded;
 		}
 		return this.asTaskCorpus(await this.filesystem.listTasks());

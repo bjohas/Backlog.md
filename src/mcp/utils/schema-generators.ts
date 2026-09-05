@@ -1,6 +1,7 @@
 import { DEFAULT_STATUSES } from "../../constants/index.ts";
 import type { BacklogConfig } from "../../types/index.ts";
 import { getPriorityLabels } from "../../utils/priority-config.ts";
+import { getProjectValues } from "../../utils/project-config.ts";
 import { getTaskTypeValues } from "../../utils/task-type-config.ts";
 import type { JsonSchema } from "../validation/validators.ts";
 
@@ -61,7 +62,16 @@ function generateTypeFilterSchema(config: Pick<BacklogConfig, "types">): JsonSch
 	};
 }
 
-export function generateTaskListSchema(config: Pick<BacklogConfig, "types">): JsonSchema {
+function generateProjectFilterSchema(config: Pick<BacklogConfig, "projects">): JsonSchema {
+	return {
+		type: "array",
+		items: generateProjectFieldSchema(config),
+		maxItems: 50,
+		description: "Filter tasks by one or more configured projects (OR semantics).",
+	};
+}
+
+export function generateTaskListSchema(config: Pick<BacklogConfig, "types" | "projects">): JsonSchema {
 	return {
 		type: "object",
 		properties: {
@@ -70,6 +80,7 @@ export function generateTaskListSchema(config: Pick<BacklogConfig, "types">): Js
 				maxLength: 100,
 			},
 			type: generateTypeFilterSchema(config),
+			...(getProjectValues(config).length > 0 ? { project: generateProjectFilterSchema(config) } : {}),
 			assignee: {
 				type: "string",
 				maxLength: 100,
@@ -120,11 +131,28 @@ function generatePriorityFieldSchema(config: Pick<BacklogConfig, "priorities">):
 	};
 }
 
+/**
+ * Generates a project field schema with dynamic enum values sourced from config.
+ * Unlike priority and type, projects has no default set, so callers must omit this
+ * field from generated tool schemas entirely when no projects are configured.
+ */
+function generateProjectFieldSchema(config: Pick<BacklogConfig, "projects">): JsonSchema {
+	const projects = getProjectValues(config);
+
+	return {
+		type: "string",
+		maxLength: 50,
+		enum: projects,
+		enumCaseInsensitive: true,
+		description: `Optional task project (case-insensitive). Valid values: ${projects.join(", ")}`,
+	};
+}
+
 function generateDueDateFieldSchema(description: string, clearable = false): JsonSchema {
 	return {
 		type: clearable ? ["string", "null"] : "string",
 		maxLength: 64,
-		description: `${description} Use a UTC datetime such as 2026-08-10 14:30 or an ISO datetime with an explicit offset. Date-only values are rejected.`,
+		description: `${description} Use a date such as 2026-08-10. A due date names a day and carries no time.`,
 	};
 }
 
@@ -145,9 +173,10 @@ export function generateTaskCreateSchema(config: BacklogConfig): JsonSchema {
 				maxLength: 10000,
 			},
 			status: generateStatusFieldSchema(config),
-			dueDate: generateDueDateFieldSchema("Optional task due date and time."),
+			dueDate: generateDueDateFieldSchema("Optional task due date."),
 			priority: generatePriorityFieldSchema(config),
 			type: generateTypeFieldSchema(config),
+			...(getProjectValues(config).length > 0 ? { project: generateProjectFieldSchema(config) } : {}),
 			ordinal: {
 				type: "number",
 				minimum: 0,
@@ -265,9 +294,10 @@ export function generateTaskEditSchema(config: BacklogConfig): JsonSchema {
 				maxLength: 10000,
 			},
 			status: generateStatusFieldSchema(config),
-			dueDate: generateDueDateFieldSchema("Set the task due date and time, or pass null to clear it.", true),
+			dueDate: generateDueDateFieldSchema("Set the task due date, or pass null to clear it.", true),
 			priority: generatePriorityFieldSchema(config),
 			type: generateTypeFieldSchema(config),
+			...(getProjectValues(config).length > 0 ? { project: generateProjectFieldSchema(config) } : {}),
 			ordinal: {
 				type: "number",
 				minimum: 0,
@@ -506,7 +536,7 @@ export function generateTaskEditSchema(config: BacklogConfig): JsonSchema {
 	};
 }
 
-export function generateTaskSearchSchema(config: Pick<BacklogConfig, "priorities" | "types">): JsonSchema {
+export function generateTaskSearchSchema(config: Pick<BacklogConfig, "priorities" | "types" | "projects">): JsonSchema {
 	return {
 		type: "object",
 		properties: {
@@ -519,6 +549,7 @@ export function generateTaskSearchSchema(config: Pick<BacklogConfig, "priorities
 				maxLength: 100,
 			},
 			type: generateTypeFilterSchema(config),
+			...(getProjectValues(config).length > 0 ? { project: generateProjectFilterSchema(config) } : {}),
 			priority: generatePriorityFieldSchema(config),
 			modifiedFiles: {
 				type: "array",

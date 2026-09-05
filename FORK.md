@@ -1,7 +1,7 @@
 # OpenDevEd fork: what's added, and how it's organized
 
 This file exists so a future rebase, a new contributor, or future-us can answer
-"what did we change, and why" without re-reading 67 commits. It documents the
+"what did we change, and why" without re-reading the fork's commits. It documents the
 **fork's own structure**, not Backlog.md itself — see `MANIFESTO.md` and
 `CLAUDE.md` for that.
 
@@ -36,53 +36,87 @@ fork-specific so it stops being a diff at all. That's what this file and the
 
 ## Build stages
 
-Four independent layers, each buildable/testable on its own:
+Five independent layers, each buildable/testable on its own:
 
-1. **Dependency patch** (`patches/neo-neo-bblessed@1.0.9.patch`, via bun
-   `patchedDependencies`) — fixes emoji width measurement in the vendored
-   blessed fork. Applied automatically by `bun i`; nothing to build.
-2. **Core + CLI plumbing** (`src/types/index.ts`, `src/file-system/operations.ts`,
-   `src/utils/config-watcher.ts`, `src/cli.ts`) — three new config keys
-   (`taskListPaneWidth`, `documentBaseUrl`) and one dependency-driven fix
-   (`clipboard.ts` OSC 52 fallback). Built as part of the normal
-   `bun run build`.
-3. **TUI** (`src/ui/task-viewer-with-search.ts`, `src/ui/board.ts`) — pane
-   width, popup refresh-after-edit. Same build as upstream.
-4. **Web UI** (`src/web/**`) — the bulk of the fork: maximize mode, checkbox
-   rendering, document-link rewriting, comment UX, settings fields. Same
+1. **Core + CLI plumbing** (`src/types/index.ts`, `src/file-system/operations.ts`,
+   `src/utils/config-watcher.ts`, `src/cli.ts`, `src/core/init.ts`,
+   `src/commands/advanced-config-wizard.ts`) — six config keys
+   (`taskListPaneWidth`, `documentBaseUrl`, `relativeDueDates`,
+   `guardedTaskSync`, `guardedTaskPublish`, `logGitActions`) and one
+   dependency-driven fix (`clipboard.ts` OSC 52 fallback).
+2. **Guarded Git** (`src/git/operations.ts`, `src/core/backlog.ts`,
+   `src/server/index.ts`) — the largest single addition; see its own section
+   below.
+3. **TUI** (`src/ui/task-viewer-with-search.ts`, `src/ui/board.ts`,
+   `src/ui/unified-view.ts`) — pane width, `R` sync binding, move-failure
+   footer, carriage-return Enter binding. Same build as upstream.
+4. **Web UI** (`src/web/**`) — maximize mode, checkbox rendering,
+   document-link rewriting, comment UX, settings fields, Sync button. Same
    `bun run build`; no separate bundle.
+5. **Local install** (`scripts/local-install.ts`, `install.sh`) — `bun run build`
+   symlinks the built binary into `~/.local/bin/backlog`.
 
 There is no separate fork build step — `bun run build` produces `dist/backlog`
-with all of the above baked in, same as it would for a stock checkout.
+with all of the above baked in, same as it would for a stock checkout. The fork
+no longer carries any dependency patch: `package.json` and `bun.lock` are
+byte-identical to upstream's.
 
 ## What's added, by stage
 
-### 1. Dependency patch
-- Emoji measured as 2 terminal cells (was 1) — fixes TUI board/list alignment.
-  [BACK-643](backlog/tasks) · upstream: issue #949, PR #950 (open).
-
-### 2. Core + CLI
+### 1. Core + CLI
 | Addition | Config key | Task |
 |---|---|---|
-| TUI list/detail pane width | `taskListPaneWidth` | BACK-641, BACK-661 (web Settings) |
-| Doc-link rewrite base URL | `documentBaseUrl` | BACK-659, BACK-663 (web Settings) |
-| OSC 52 clipboard fallback (yank over SSH) | — | BACK-642 · upstream: issue #947 (no PR yet) |
+| TUI list/detail pane width | `taskListPaneWidth` | BACK-686, BACK-661 (web Settings) · upstream PR [#965](https://github.com/MrLesk/Backlog.md/pull/965) (open) |
+| Doc-link rewrite base URL | `documentBaseUrl` | BACK-703, BACK-707 (web Settings) |
+| Relative due-date display | `relativeDueDates` | BACK-716 |
+| OSC 52 clipboard fallback (yank over SSH) | — | BACK-642 · upstream issue #947, PR [#961](https://github.com/MrLesk/Backlog.md/pull/961) (open) |
+
+### 2. Guarded Git
+
+The fork's largest addition, and the one with no upstream counterpart. Three
+config keys, all default `false`:
+
+| Key | Behavior |
+|---|---|
+| `guardedTaskSync` | Interactive views fetch and fast-forward the current branch, refusing anything that is not a clean fast-forward |
+| `guardedTaskPublish` | Every task mutation runs against a clean synchronized checkout, then commits and pushes just that task's files. Implies guarded sync without changing its stored value |
+| `logGitActions` | One JSONL record per Backlog-initiated Git command under `$(git rev-parse --git-path backlog-git-actions.jsonl)`, with credentials redacted |
+
+Where it lives:
+
+- `src/git/operations.ts` — fast-forward inspection, checkout-identity pinning,
+  `prepareGuardedTaskPublish` / `publishGuardedTaskChanges`, task-only-commit
+  detection, the action log.
+- `src/core/backlog.ts` — `withTaskMutationTransaction` wraps every mutation
+  path (create, update, bulk, reorder, move, archive, promote, demote).
+- `src/server/index.ts` + `src/web/lib/api.ts` — `POST /api/sync`, with a
+  **Sync** button in the web header, auto-sync on load and tab focus, and a
+  60-second freshness window.
+- `src/ui/board.ts`, `src/ui/unified-view.ts` — the `R` binding and its
+  colour-toned footer results.
+- Tasks: BACK-676 (degrade to a local commit rather than refuse the mutation),
+  BACK-677 (publish deferred task-only commits), BACK-722.
+
+Documented for users in `README.md` and `ADVANCED-CONFIG.md`.
 
 ### 3. TUI
 | Addition | Task |
 |---|---|
-| Board task popup refreshes after external-editor edit | BACK-644 · upstream: issue #951, PR #952 (open) |
+| Board move failures surfaced in the footer | BACK-719 |
+| Carriage return bound alongside Enter (kitty and other CR terminals) | BACK-674 · upstream issue #1003, PR [#1002](https://github.com/MrLesk/Backlog.md/pull/1002) (open) |
 
 ### 4. Web UI
 | Addition | Task |
 |---|---|
-| All Tasks maximize mode (persisted, real fullscreen, filters+search usable inside, survives focus loss) | BACK-645–647, 651–653, 658 |
-| Updated-date column + persisted sort | BACK-648, 650 |
+| All Tasks maximize mode (persisted, real fullscreen, filters+search usable inside, survives focus loss) | BACK-645, 691, 647, 651, 653, 696, 658 |
+| Updated-date column, sort persisted to local storage and the URL, sortable Assignee | BACK-692, 650, 713, 670 |
 | Copy task ID button | BACK-649 |
-| Checkbox spans (`[]{.checkbox}` / `[x]{.checkbox}`) render as tickable boxes, fresh-fetch-before-write to avoid clobbering concurrent edits | BACK-654, 660 |
+| Checkbox spans (`[]{.checkbox}` / `[x]{.checkbox}`) render as tickable boxes, fresh-fetch-before-write to avoid clobbering concurrent edits | BACK-698, 660, 665 |
 | Comment from preview mode (inline + header button) | BACK-656, 657 |
-| Modal capped by dynamic viewport height (mobile browser bar) | BACK-655 |
-| Documentation entries + in-task repo-relative links open against `documentBaseUrl` | BACK-659, 662 |
+| Modal capped by dynamic viewport height (mobile browser bar) | BACK-699 |
+| Documentation entries + in-task repo-relative links open against `documentBaseUrl` | BACK-703, 706 |
+| Default assignee / comment author from config, falling back to the server's git identity | BACK-710 |
+| Search field and clearer placeholder in the All Tasks panel | BACK-696, 668 |
 
 ### 5. Deployment (separate repo, not part of this build)
 `~/development/services/services/backlog.md-service` — systemd units serving
@@ -96,7 +130,8 @@ These carry fork logic and touch nothing upstream owns internally:
 - `src/web/utils/checkbox-spans.ts`
 - `src/web/utils/document-url.ts`
 - `src/web/contexts/DocumentBaseUrlContext.tsx`
-- `patches/neo-neo-bblessed@1.0.9.patch`
+- `src/utils/utc-date-display.ts` (fork adds `formatDueDateForDisplay`)
+- `scripts/local-install.ts`, `install.sh`
 
 ## Touch-points in shared files (search `[FORK]`)
 
@@ -108,18 +143,27 @@ hand-placed marker, so it can't drift out of sync with the code:
 ```
 $ grep -rln "\[FORK\]" src/
 src/cli.ts
-src/types/index.ts
 src/file-system/operations.ts
-src/utils/config-watcher.ts
-src/utils/clipboard.ts
+src/types/index.ts
 src/ui/board.ts
 src/ui/task-viewer-with-search.ts
+src/utils/clipboard.ts
+src/utils/config-watcher.ts
 src/web/App.tsx
 src/web/components/MermaidMarkdown.tsx
 src/web/components/Settings.tsx
 src/web/components/TaskDetailsModal.tsx
 src/web/components/TaskList.tsx
 ```
+
+`src/web/components/SideNavigation.tsx` lost its banner in the 2026-09 merge:
+upstream took that fix as [#955](https://github.com/MrLesk/Backlog.md/pull/955),
+so it is no longer a fork change. Several other shared files now carry fork logic
+without a banner yet — `src/git/operations.ts`, `src/core/backlog.ts`,
+`src/server/index.ts`, `src/core/init.ts`, `src/commands/advanced-config-wizard.ts`,
+`src/ui/unified-view.ts`, `src/web/lib/api.ts`, `src/web/components/Navigation.tsx`,
+`src/web/components/Layout.tsx` — from the guarded-Git workstream. Adding those
+banners is outstanding.
 
 Run the file's own `git diff upstream/main..main -- <file>` (or `git log
 --oneline upstream/main..main -- <file>` for the commits) to see exactly what
@@ -133,22 +177,60 @@ call it.
 
 ## Relationship to upstream
 
-- `main` — this fork's line of development. All BACK-6xx work lands here via
-  `--no-ff` merges of `tasks/back-NNN-*` branches.
-- `fix/tui-emoji-width`, `fix/board-popup-refresh` — clean single-purpose
-  branches based on `upstream/main`, each backing one open PR (#950, #952).
-  They exist so the PR diff doesn't carry the rest of this fork.
+- `main` — this fork's line of development. Work lands here via `--no-ff`
+  merges of `tasks/back-NNN-*` branches.
 - Everything the fork carries that is a general bug fix (not an opinionated
-  feature) should eventually go upstream the same way. `tmp/TODO.md`
-  (untracked) tracks upstream PRs worth adopting the other direction.
-- No fixed sync cadence yet — `upstream/main` has not moved since the fork
-  point, so there's nothing to rebase against. Once it does, re-run
-  `git log --oneline main..upstream/main` and diff-review before merging
+  feature) should eventually go upstream. `tmp/TODO.md` (untracked) tracks
+  upstream PRs worth adopting the other direction.
+
+### Sync history
+
+**2026-09-04** — merged `upstream/main` at `3c7fde65` (43 upstream PRs, fork
+point `40482ca0`/BACK-639) via branch `merge/upstream-2026-09`. 19 files
+conflicted, 50 hunks. `rerere` is enabled in this repo, so those resolutions
+replay when rebasing the PR branches.
+
+Three fork fixes were superseded and now come from upstream instead:
+
+| Fork fix | Upstream |
+|---|---|
+| Sidebar quick-search score filter | [#955](https://github.com/MrLesk/Backlog.md/pull/955) — the fork's own PR, merged |
+| Emoji double-width in the TUI | [#956](https://github.com/MrLesk/Backlog.md/pull/956) — carries the fork's commit; fix vendored into `neo-neo-bblessed` 1.0.10, so the dependency patch is gone |
+| Board task popup refresh | [#957](https://github.com/MrLesk/Backlog.md/pull/957) — reimplemented through the board's live-update funnel |
+
+Upstream changes the fork had to be reconciled with:
+
+- **#994** made due dates date-only. `formatDueDateForDisplay` now appends the
+  `(UTC)` label only when the stored value carries a time — a bare calendar day
+  has no timezone to label. This changed what the fork's own `relativeDueDates`
+  renders.
+- **#992** introduced `StoredDate` as the single component every web surface uses
+  for a stored date. Rather than have four call sites branch on `relativeDueDates`,
+  it gained a `relativeDue` prop.
+- **#981** replaced full web reloads with in-place updates, over the fork's
+  BACK-653 live-update work.
+- **#958/#959** consolidated task search in core, under the fork's BACK-711 fix.
+
+**Task IDs collided head-on.** Both sides had independently used BACK-641…678,
+producing 37 duplicate groups. `backlog doctor --fix` repaired them, renumbering
+18 upstream-owned and 19 fork-owned records into BACK-686+. Note the consequence:
+BACK-6xx references in this fork's older commit messages may now name a different
+task, and the upstream records that were renumbered will collide again on the next
+merge. **Before the next sync, decide whether the fork should move to a reserved
+ID range so upstream records keep their own IDs permanently.**
+
+### Next sync
+
+Re-run `git log --oneline main..upstream/main` and diff-review before merging.
+`git merge-tree --write-tree --name-only main upstream/main` gives the conflict
+list without touching the working tree.
 
 ## Upstream PR candidates (clean branches, not in this fork)
 
 Focused, independent branches based on `upstream/main`, each created for
-contribution back to MrLesk/Backlog.md. Each branch lives in its own
+contribution back to MrLesk/Backlog.md. **All five are still open and all five
+predate the 2026-09 merge — they need rebasing onto the current `upstream/main`
+before they can land.** `rerere` will replay the merge's resolutions. Each branch lives in its own
 worktree under `/home/bjohas/development/git/Backlog.md-worktrees/` and contains
 only source and test changes required for its PR, with no fork-specific metadata,
 task files, or config changes.

@@ -132,7 +132,10 @@ const millisecondsPerHour = 60 * 60 * 1000;
  */
 export function formatDueDateForDisplay(dateStr: string | undefined, options: DueDateDisplayOptions = {}): string {
 	if (!options.relativeDays) {
-		return formatUtcDateForDisplay(dateStr, options);
+		// A due date is a calendar day unless it carries a time, and a bare day has no
+		// timezone to label - only a stored time makes "(UTC)" mean anything.
+		const hasTime = /[ T]\d{2}:\d{2}/.test((dateStr ?? "").trim());
+		return formatUtcDateForDisplay(dateStr, hasTime ? options : { ...options, appendUtcLabel: false });
 	}
 
 	const value = (dateStr ?? "").trim().replace(utcLabelPattern, "").trim();

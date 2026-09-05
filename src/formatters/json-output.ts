@@ -1,6 +1,16 @@
 import { isAbsolute, join, relative } from "node:path";
-import type { Decision, Document, SearchResult, Task } from "../types/index.ts";
+import type { TaskDetail, TaskListItem } from "../core/task-detail.ts";
+import type {
+	Decision,
+	DecisionSearchResult,
+	Document,
+	DocumentSearchResult,
+	Task,
+	TaskSearchResult,
+} from "../types/index.ts";
 import { isLocalEditableTask } from "../types/index.ts";
+import type { DependencyGraph } from "../utils/dependency-graph.ts";
+import type { TaskReadiness } from "../utils/readiness.ts";
 import { sortByTaskId } from "../utils/task-sorting.ts";
 
 type TaskSummaryJson = {
@@ -9,6 +19,7 @@ type TaskSummaryJson = {
 	status: string;
 	type: string | null;
 	priority: string | null;
+	project: string | null;
 	assignees: string[];
 	reporter: string | null;
 	labels: string[];
@@ -16,10 +27,17 @@ type TaskSummaryJson = {
 	parentTaskId: string | null;
 	acceptanceCriteriaCompleted: number;
 	acceptanceCriteriaCount: number;
+	references: string[];
+	modifiedFiles: string[];
 	ordinal: number | null;
 	createdAt: string | null;
 	updatedAt: string | null;
 	dueDate: string | null;
+	/**
+	 * Derived from the whole visible corpus at read time, never stored: work can start now because
+	 * the task is unfinished and every dependency it names resolved to a completed task.
+	 */
+	isReady: boolean;
 };
 
 type ChecklistItemJson = {
@@ -35,13 +53,25 @@ type TaskCommentJson = {
 	author: string | null;
 };
 
+/** The normalized dependency context: an explicit root, every reached node, and directed edges. */
+type DependencyGraphJson = {
+	root: string;
+	nodes: DependencyGraph["nodes"];
+	edges: DependencyGraph["edges"];
+};
+
 type TaskDetailsJson = TaskSummaryJson & {
 	path: string | null;
 	description: string | null;
 	dependencies: string[];
-	references: string[];
+	/**
+	 * Derived from the whole visible corpus at read time. `dependencies` above it stays the task's
+	 * own list of direct dependency IDs, unchanged.
+	 */
+	dependencyGraph: DependencyGraphJson;
+	/** Why `isReady` above reads the way it does, from the same derivation. */
+	readiness: TaskReadiness;
 	documentation: string[];
-	modifiedFiles: string[];
 	subtasks: Array<{ id: string; title: string }>;
 	acceptanceCriteria: ChecklistItemJson[];
 	definitionOfDone: ChecklistItemJson[];
@@ -95,7 +125,7 @@ function normalizePublicDate(value: string | undefined): string | null {
 	return Number.isNaN(parsed.getTime()) ? value : parsed.toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 
-function toTaskSummaryJson(task: Task): TaskSummaryJson {
+function toTaskSummaryJson(task: TaskListItem): TaskSummaryJson {
 	const acceptanceCriteria = task.acceptanceCriteriaItems ?? [];
 	return {
 		id: task.id,
@@ -103,6 +133,7 @@ function toTaskSummaryJson(task: Task): TaskSummaryJson {
 		status: task.status,
 		type: nullable(task.type),
 		priority: nullable(task.priority),
+		project: nullable(task.project),
 		assignees: task.assignee ?? [],
 		reporter: nullable(task.reporter),
 		labels: task.labels ?? [],
@@ -110,10 +141,13 @@ function toTaskSummaryJson(task: Task): TaskSummaryJson {
 		parentTaskId: nullable(task.parentTaskId),
 		acceptanceCriteriaCompleted: acceptanceCriteria.filter((criterion) => criterion.checked).length,
 		acceptanceCriteriaCount: acceptanceCriteria.length,
+		references: task.references ?? [],
+		modifiedFiles: task.modifiedFiles ?? [],
 		ordinal: task.ordinal ?? null,
 		createdAt: normalizePublicDate(task.createdDate),
 		updatedAt: normalizePublicDate(task.updatedDate),
 		dueDate: normalizePublicDate(task.dueDate),
+		isReady: task.isReady,
 	};
 }
 
@@ -130,15 +164,19 @@ function toChecklistJson(items: Task["acceptanceCriteriaItems"]): ChecklistItemJ
 		.map(({ index, text, checked }) => ({ index, text, checked }));
 }
 
-function toTaskDetailsJson(task: Task, projectRoot: string): TaskDetailsJson {
+function toDependencyGraphJson(graph: DependencyGraph): DependencyGraphJson {
+	return { root: graph.rootId, nodes: graph.nodes, edges: graph.edges };
+}
+
+function toTaskDetailsJson(task: TaskDetail, projectRoot: string): TaskDetailsJson {
 	return {
-		...toTaskSummaryJson(task),
+		...toTaskSummaryJson({ ...task, isReady: task.readiness.isReady }),
 		path: toProjectRelativePath(projectRoot, task.filePath),
 		description: nullableDescription(task.description),
 		dependencies: task.dependencies ?? [],
-		references: task.references ?? [],
+		dependencyGraph: toDependencyGraphJson(task.dependencyGraph),
+		readiness: task.readiness,
 		documentation: task.documentation ?? [],
-		modifiedFiles: task.modifiedFiles ?? [],
 		subtasks: sortByTaskId(task.subtaskSummaries ?? []),
 		acceptanceCriteria: toChecklistJson(task.acceptanceCriteriaItems),
 		definitionOfDone: toChecklistJson(task.definitionOfDoneItems),
@@ -178,19 +216,36 @@ function toDecisionSummaryJson(decision: Decision): DecisionSummaryJson {
 	};
 }
 
-export function taskListJson(tasks: Task[]) {
+export function taskListJson(tasks: TaskListItem[]) {
 	return { schemaVersion: 1, kind: "task-list" as const, tasks: tasks.map(toTaskSummaryJson) };
 }
 
-export function taskViewJson(task: Task, projectRoot: string) {
-	return { schemaVersion: 1, kind: "task-view" as const, task: toTaskDetailsJson(task, projectRoot) };
+export function taskViewJson(task: TaskDetail, projectRoot: string) {
+	return {
+		schemaVersion: 1,
+		kind: "task-view" as const,
+		task: toTaskDetailsJson(task, projectRoot),
+	};
 }
 
 export function decisionListJson(decisions: Decision[]) {
 	return { schemaVersion: 1, kind: "decision-list" as const, decisions: decisions.map(toDecisionSummaryJson) };
 }
 
-export function searchJson(results: SearchResult[], projectRoot: string, docsDir: string) {
+/**
+ * A search result set whose task records already carry readiness.
+ *
+ * The verdict travels on the record inside each result rather than being looked up by ID: two files
+ * can claim one ID with different dependencies, and each claimant has to keep its own answer.
+ */
+export type SearchResultInput =
+	| DocumentSearchResult
+	| DecisionSearchResult
+	| (Omit<TaskSearchResult, "task"> & {
+			task: TaskListItem;
+	  });
+
+export function searchJson(results: SearchResultInput[], projectRoot: string, docsDir: string) {
 	const publicResults: SearchResultJson[] = [];
 	for (const result of results) {
 		if (result.type === "task") {

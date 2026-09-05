@@ -12,12 +12,7 @@ import { collectAvailableLabels } from "../../utils/label-filter.ts";
 import { compareTaskIds, compareTaskIdsDescending } from "../../utils/task-sorting.ts";
 import { isTerminalStatus } from "../../utils/terminal-status.ts";
 import { collectArchivedMilestoneKeys, getMilestoneLabel, milestoneKey } from "../utils/milestones";
-import {
-	formatStoredUtcDateForCompactDisplay,
-	formatStoredUtcDateForDisplay,
-	formatStoredUtcDueDateForRelativeDisplay,
-	parseStoredUtcDate,
-} from "../utils/date-display";
+import { parseStoredUtcDate } from "../utils/date-display";
 import {
 	formatPriorityLabel,
 	getPriorityOptions,
@@ -25,6 +20,7 @@ import {
 	resolvePriorityValue,
 } from "../../utils/priority-config.ts";
 import CleanupModal from "./CleanupModal";
+import StoredDate from "./StoredDate";
 import AcceptanceCriteriaProgress from "./AcceptanceCriteriaProgress";
 import LabelFilterDropdown from "./LabelFilterDropdown";
 import { SuccessToast } from "./SuccessToast";
@@ -1125,11 +1121,6 @@ const TaskList: React.FC<TaskListProps> = ({
 									const visibleAssignees = task.assignee.slice(0, 2);
 									const assigneeOverflow = Math.max(task.assignee.length - visibleAssignees.length, 0);
 									const milestoneLabel = task.milestone ? getMilestoneLabel(task.milestone, milestoneEntities) : "—";
-									const createdLabel = formatStoredUtcDateForCompactDisplay(task.createdDate ?? "", dateFormat);
-									const updatedLabel = formatStoredUtcDateForCompactDisplay(
-										task.updatedDate ?? task.createdDate ?? "",
-										dateFormat,
-									);
 
 									return (
 										<tr
@@ -1171,13 +1162,10 @@ const TaskList: React.FC<TaskListProps> = ({
 														</span>
 													)}
 												</div>
-												<AcceptanceCriteriaProgress task={task} cells={10} className="mt-1" />
+												<AcceptanceCriteriaProgress task={task} density="list" className="mt-1" />
 												{task.dueDate && (
 													<div className="mt-1 text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
-														{relativeDueDates ? "Due:" : "Due (UTC):"}{" "}
-														{relativeDueDates
-															? formatStoredUtcDueDateForRelativeDisplay(task.dueDate)
-															: formatStoredUtcDateForDisplay(task.dueDate, dateFormat)}
+														Due: <StoredDate value={task.dueDate} dateFormat={dateFormat} relativeDue={relativeDueDates} />
 													</div>
 												)}
 											</td>
@@ -1244,10 +1232,10 @@ const TaskList: React.FC<TaskListProps> = ({
 												{milestoneLabel}
 											</td>
 											<td className="px-3 py-2.5 text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
-												{createdLabel}
+												<StoredDate value={task.createdDate} dateFormat={dateFormat} compact />
 											</td>
 											<td className="px-3 py-2.5 text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
-												{updatedLabel}
+												<StoredDate value={task.updatedDate ?? task.createdDate} dateFormat={dateFormat} compact />
 											</td>
 										</tr>
 									);
