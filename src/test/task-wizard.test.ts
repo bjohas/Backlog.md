@@ -41,7 +41,7 @@ describe("task wizard", () => {
 			status: "In Progress",
 			priority: "medium",
 			type: "epic",
-			dueDate: "2026-08-10T16:30+02:00",
+			dueDate: "2026-08-10",
 			assignee: "alice, @bob",
 			labels: "cli, wizard",
 			acceptanceCriteria: "[x] First criterion, Second criterion",
@@ -65,7 +65,7 @@ describe("task wizard", () => {
 		expect(input?.status).toBe("In Progress");
 		expect(input?.priority).toBe("medium");
 		expect(input?.type).toBe("Epic");
-		expect(input?.dueDate).toBe("2026-08-10 14:30");
+		expect(input?.dueDate).toBe("2026-08-10");
 		expect(input?.assignee).toEqual(["alice", "@bob"]);
 		expect(input?.labels).toEqual(["cli", "wizard"]);
 		expect(input?.acceptanceCriteria).toEqual([
@@ -91,7 +91,7 @@ describe("task wizard", () => {
 			type: "Bug",
 			assignee: ["alice"],
 			createdDate: "2026-02-20 12:00",
-			dueDate: "2026-08-10 14:30",
+			dueDate: "2026-08-10",
 			labels: ["existing"],
 			dependencies: ["task-1"],
 			references: ["docs/old.md"],
@@ -367,5 +367,98 @@ describe("task wizard", () => {
 		expect(messages.get("description")).toContain("Shift+Enter not supported");
 		expect(messages.get("implementationPlan")).toContain("Shift+Enter not supported");
 		expect(messages.get("implementationNotes")).toContain("Shift+Enter not supported");
+	});
+
+	it("skips the project prompt entirely when no projects are configured", async () => {
+		const asked: string[] = [];
+		const prompt: TaskWizardPromptRunner = async (question) => {
+			asked.push(question.name);
+			return { [question.name]: question.initial ?? "" };
+		};
+
+		const input = await runTaskCreateWizard({
+			statuses: ["To Do", "In Progress", "Done"],
+			promptImpl: prompt,
+		});
+
+		expect(input).not.toBeNull();
+		expect(input?.project).toBeUndefined();
+		expect(asked).not.toContain("project");
+	});
+
+	it("prompts for project with a None option when projects are configured", async () => {
+		const questions: Record<string, { type: string; initial?: string; optionValues: string[] }> = {};
+		const prompt: TaskWizardPromptRunner = async (question) => {
+			questions[question.name] = {
+				type: question.type,
+				initial: question.initial,
+				optionValues: (question.options ?? []).map((option) => option.value),
+			};
+			return { [question.name]: question.initial ?? "" };
+		};
+
+		const input = await runTaskCreateWizard({
+			statuses: ["To Do", "In Progress", "Done"],
+			projects: ["Web", "API"],
+			promptImpl: prompt,
+		});
+
+		expect(input).not.toBeNull();
+		expect(input?.project).toBeUndefined();
+		expect(questions.project?.type).toBe("select");
+		expect(questions.project?.initial).toBe("");
+		expect(questions.project?.optionValues).toEqual(["", "Web", "API"]);
+	});
+
+	it("builds create input with configured project canonical casing", async () => {
+		const prompt = createPromptRunner({
+			title: "Projected task",
+			description: "",
+			priority: "",
+			type: "",
+			project: "web",
+			assignee: "",
+			labels: "",
+			acceptanceCriteria: "",
+			definitionOfDone: "",
+			implementationPlan: "",
+			implementationNotes: "",
+			references: "",
+			documentation: "",
+			dependencies: "",
+		});
+
+		const input = await runTaskCreateWizard({
+			statuses: ["To Do", "In Progress", "Done"],
+			projects: ["Web", "API"],
+			promptImpl: prompt,
+		});
+
+		expect(input).not.toBeNull();
+		expect(input?.project).toBe("Web");
+	});
+
+	it("clears an existing project when None is selected", async () => {
+		const existingTask: Task = {
+			id: "task-9",
+			title: "Projected task",
+			status: "To Do",
+			project: "API",
+			assignee: [],
+			createdDate: "2026-02-20 12:00",
+			labels: [],
+			dependencies: [],
+			rawContent: "",
+		};
+		const prompt = createPromptRunner({ project: "" });
+
+		const updateInput = await runTaskEditWizard({
+			task: existingTask,
+			statuses: ["To Do", "In Progress", "Done"],
+			projects: ["Web", "API"],
+			promptImpl: prompt,
+		});
+
+		expect(updateInput?.project).toBe("");
 	});
 });

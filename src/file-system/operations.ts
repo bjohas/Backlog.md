@@ -16,6 +16,7 @@ import {
 import { findDecisionById } from "../utils/decision-id.ts";
 import { documentIdsEqual, findDocumentById, normalizeDocumentId } from "../utils/document-id.ts";
 import { normalizeDocumentRelativePath, normalizeDocumentSubPath } from "../utils/document-path.ts";
+import { normalizeDueDate } from "../utils/due-date.ts";
 import type { DraftIdentityFindings } from "../utils/duplicate-detection.ts";
 import { AmbiguousIdError, isAmbiguousIdError } from "../utils/entity-id.ts";
 import {
@@ -26,7 +27,9 @@ import {
 	idForFilename,
 	normalizeId,
 } from "../utils/prefix-config.ts";
+import { matchesProjectFilter } from "../utils/project-config.ts";
 import { normalizeStatusSet, statusMatchesSet } from "../utils/status-filter.ts";
+import { withoutVacatedTaskLinks } from "../utils/task-links.ts";
 import {
 	AmbiguousTaskIdError,
 	draftIdsMatchLoosely,
@@ -40,7 +43,6 @@ import {
 } from "../utils/task-path.ts";
 import { sortByTaskId } from "../utils/task-sorting.ts";
 import { matchesTaskTypeFilter } from "../utils/task-type-config.ts";
-import { normalizeUtcDateTime } from "../utils/utc-datetime.ts";
 
 // Interface for task path resolution context
 interface TaskPathContext {
@@ -68,7 +70,7 @@ interface LockAttemptSettings {
 }
 
 /** Config keys stored as YAML lists. `default_assignee` also accepts a single scalar. */
-type ConfigListKey = "statuses" | "labels" | "types" | "priorities" | "default_assignee";
+type ConfigListKey = "statuses" | "labels" | "types" | "priorities" | "projects" | "default_assignee";
 
 /**
  * A mapping key line, whatever characters the name uses. Keys Backlog does not read still end the
@@ -1042,6 +1044,9 @@ export class FileSystem {
 		if (filter?.type) {
 			tasks = tasks.filter((task) => matchesTaskTypeFilter(task.type, filter.type));
 		}
+		if (filter?.project) {
+			tasks = tasks.filter((task) => matchesProjectFilter(task.project, filter.project));
+		}
 
 		if (filter?.assignee) {
 			const assignee = filter.assignee;
@@ -1278,9 +1283,11 @@ export class FileSystem {
 			const config = await this.loadConfig();
 			const newDraftId = generateNextId(existingIds, "draft", config?.zeroPaddedIds);
 
-			// Update task with new draft ID and save as draft
+			// Update task with new draft ID and save as draft. The record's own links are cleaned of
+			// the task ID it vacates here: carried into the draft, such a link would rebind to
+			// whatever task is allocated that ID next.
 			const demotedDraft: Task = {
-				...task,
+				...(withoutVacatedTaskLinks(task, task.id) ?? task),
 				id: newDraftId,
 				filePath: undefined, // Will be set by saveDraft
 			};
@@ -1891,7 +1898,7 @@ ${rawContent.trim()}
 	}
 
 	async createMilestone(title: string, description?: string, dueDate?: string): Promise<Milestone> {
-		const normalizedDueDate = normalizeUtcDateTime(dueDate, "Due date");
+		const normalizedDueDate = normalizeDueDate(dueDate, "Due date");
 		return await this.withCreateLock(async () => {
 			const milestonesDir = await this.getMilestonesDir();
 
@@ -1970,7 +1977,7 @@ ${description || `Milestone: ${title}`}`,
 			return { success: false };
 		}
 
-		const normalizedDueDate = dueDate === null ? undefined : normalizeUtcDateTime(dueDate, "Due date");
+		const normalizedDueDate = dueDate === null ? undefined : normalizeDueDate(dueDate, "Due date");
 		let sourcePath: string | undefined;
 		let targetPath: string | undefined;
 		let movedFile = false;
@@ -2113,15 +2120,15 @@ ${description || `Milestone: ${title}`}`,
 	// Utility methods
 	private sanitizeFilename(filename: string): string {
 		// Remove path-unsafe characters, then strip noisy punctuation before normalizing whitespace
-		return (
-			filename
-				.replace(/[<>:"/\\|?*]/g, "-")
-				// biome-ignore lint/complexity/noUselessEscapeInRegex: we need explicit escapes inside the character class
-				.replace(/['(),!@#$%^&+=\[\]{};]/g, "")
-				.replace(/\s+/g, "-")
-				.replace(/-+/g, "-")
-				.replace(/^-|-$/g, "")
-		);
+		const sanitized = filename
+			.replace(/[<>:"/\\|?*]/g, "-")
+			// biome-ignore lint/complexity/noUselessEscapeInRegex: we need explicit escapes inside the character class
+			.replace(/['(),!@#$%^&+=\[\]{};]/g, "")
+			.replace(/\s+/g, "-")
+			.replace(/-+/g, "-")
+			.replace(/^-|-$/g, "");
+		// A punctuation-only title sanitizes to nothing; fall back so filenames keep the "<id> - <title>.md" shape
+		return sanitized || "untitled";
 	}
 
 	private async ensureDirectoryExists(dirPath: string): Promise<void> {
@@ -2141,6 +2148,7 @@ ${description || `Milestone: ${title}`}`,
 		config.labels = parseListValue("labels");
 		config.types = parseListValue("types");
 		config.priorities = parseListValue("priorities");
+		config.projects = parseListValue("projects");
 		config.defaultAssignee = parseListValue("default_assignee");
 		const lines = content.split("\n");
 
@@ -2250,6 +2258,7 @@ ${description || `Milestone: ${title}`}`,
 			labels: config.labels || [],
 			types: config.types,
 			priorities: config.priorities,
+			projects: config.projects,
 			definitionOfDone: config.definitionOfDone,
 			defaultStatus: config.defaultStatus,
 			dateFormat: config.dateFormat || "yyyy-mm-dd",
@@ -2291,6 +2300,9 @@ ${description || `Milestone: ${title}`}`,
 			...(config.types && config.types.length > 0 ? [`types: [${config.types.map((t) => `"${t}"`).join(", ")}]`] : []),
 			...(config.priorities && config.priorities.length > 0
 				? [`priorities: [${config.priorities.map((p) => `"${p}"`).join(", ")}]`]
+				: []),
+			...(config.projects && config.projects.length > 0
+				? [`projects: [${config.projects.map((p) => `"${p}"`).join(", ")}]`]
 				: []),
 			...(Array.isArray(normalizedDefinitionOfDone)
 				? [`definition_of_done: [${normalizedDefinitionOfDone.map((item) => JSON.stringify(item)).join(", ")}]`]

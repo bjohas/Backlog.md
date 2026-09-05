@@ -220,7 +220,7 @@ describe("CLI Integration", () => {
 			const agents = await Bun.file(join(TEST_DIR, "AGENTS.md")).text();
 			expect(agents).toContain(CLI_AGENT_NUDGE);
 			expect(agents).toContain(
-				"For every user request in this project, run `backlog instructions overview` before answering or taking action.",
+				"At the beginning of each conversation in this project, run `backlog instructions overview` before answering or taking action. Re-read it only if you have not read it yet in the current conversation.",
 			);
 			expect(agents).not.toContain("`backlog instructions` to list available guides");
 			expect(agents).not.toContain("# Instructions for the usage of Backlog.md CLI Tool");
@@ -269,6 +269,13 @@ describe("CLI Integration", () => {
 
 			expect(help).toContain("cursor (writes AGENTS.md)");
 			expect(help).toContain("cursor writes AGENTS.md");
+		});
+
+		it("documents reserved task prefixes in init help", async () => {
+			const help = await $`bun ${CLI_PATH} init --help`.cwd(TEST_DIR).text();
+
+			expect(help).toContain("--task-prefix");
+			expect(help).toContain("draft, doc, and decision are reserved");
 		});
 
 		it("should label created and updated agent instruction files separately", async () => {
@@ -452,6 +459,36 @@ describe("CLI Integration", () => {
 			}
 
 			expect(failed).toBe(true);
+		});
+
+		for (const reservedPrefix of ["draft", "DRAFT", "doc", "Doc", "decision", "DECISION"]) {
+			it(`should reject reserved --task-prefix value ${reservedPrefix}`, async () => {
+				await $`git init -b main`.cwd(TEST_DIR).quiet();
+
+				const result = await $`bun ${CLI_PATH} init ReservedPrefixProj --defaults --task-prefix ${reservedPrefix}`
+					.cwd(TEST_DIR)
+					.nothrow();
+				const output = result.stdout.toString() + result.stderr.toString();
+
+				expect(result.exitCode).toBe(1);
+				expect(output).toContain("is reserved for drafts, docs, or decisions");
+				expect(await Bun.file(join(TEST_DIR, "backlog", "config.yml")).exists()).toBe(false);
+			});
+		}
+
+		it("should reject a padded --task-prefix instead of persisting the padding", async () => {
+			// init writes --task-prefix into task_prefix verbatim, so accepting " JIRA " produced
+			// a config of task_prefix: " JIRA " and task files named ' jira -jira -1 - Title.md'.
+			await $`git init -b main`.cwd(TEST_DIR).quiet();
+
+			const result = await $`bun ${CLI_PATH} init PaddedPrefixProj --defaults --task-prefix ${" JIRA "}`
+				.cwd(TEST_DIR)
+				.nothrow();
+			const output = result.stdout.toString() + result.stderr.toString();
+
+			expect(result.exitCode).toBe(1);
+			expect(output).toContain("Task prefix must contain only letters (a-z, A-Z).");
+			expect(await Bun.file(join(TEST_DIR, "backlog", "config.yml")).exists()).toBe(false);
 		});
 	});
 

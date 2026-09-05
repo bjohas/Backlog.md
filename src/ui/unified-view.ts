@@ -4,16 +4,17 @@
 
 import type { Core } from "../core/backlog.ts";
 import { findLocalDuplicateTaskIds } from "../core/duplicate-task-repair.ts";
-import type { GuardedTaskSyncResult, Milestone, Task, TaskCreateInput } from "../types/index.ts";
+import type { GuardedTaskSyncResult, LabelMatchMode, Milestone, Task, TaskCreateInput } from "../types/index.ts";
 import { watchConfig } from "../utils/config-watcher.ts";
 import { formatDuplicateTaskIdSummary } from "../utils/duplicate-detection.ts";
 import { collectAvailableLabels } from "../utils/label-filter.ts";
 import { hasAnyPrefix } from "../utils/prefix-config.ts";
-import { applySharedTaskFilters, createTaskSearchIndex, type LabelMatchMode } from "../utils/task-search.ts";
+import { applyTaskFilters, createTaskSearchIndex } from "../utils/task-search.ts";
 import { type TaskWatcherCallbacks, watchTasks } from "../utils/task-watcher.ts";
 import { renderBoardTui } from "./board.ts";
 import { createLoadingScreen } from "./loading.ts";
 import { buildTaskViewerMilestoneFilterModel, viewTaskEnhanced } from "./task-viewer-with-search.ts";
+import { keepTuiInputAlive } from "./tui.ts";
 import { type ViewState, ViewSwitcher, type ViewType } from "./view-switcher.ts";
 
 export interface UnifiedViewOptions {
@@ -28,6 +29,7 @@ export interface UnifiedViewOptions {
 		status?: string | string[];
 		assignee?: string;
 		type?: string[];
+		project?: string[];
 		priority?: string;
 		labels?: string[];
 		labelMatch?: LabelMatchMode;
@@ -110,6 +112,7 @@ export interface UnifiedViewFilters {
 	statusFilter: string[];
 	excludeStatus: string[];
 	typeFilter: string[];
+	projectFilter: string[];
 	priorityFilter: string;
 	labelFilter: string[];
 	labelMatch?: LabelMatchMode;
@@ -117,13 +120,14 @@ export interface UnifiedViewFilters {
 	limit?: number;
 }
 
-type UnifiedViewFilterUpdate = Omit<UnifiedViewFilters, "excludeStatus" | "typeFilter"> &
-	Partial<Pick<UnifiedViewFilters, "excludeStatus" | "typeFilter">>;
+type UnifiedViewFilterUpdate = Omit<UnifiedViewFilters, "excludeStatus" | "typeFilter" | "projectFilter"> &
+	Partial<Pick<UnifiedViewFilters, "excludeStatus" | "typeFilter" | "projectFilter">>;
 
 export interface KanbanSharedFilters {
 	searchQuery: string;
 	excludeStatus: string[];
 	typeFilter?: string[];
+	projectFilter?: string[];
 	priorityFilter: string;
 	labelFilter: string[];
 	labelMatch?: LabelMatchMode;
@@ -136,6 +140,7 @@ export function createKanbanSharedFilters(filters: UnifiedViewFilters): KanbanSh
 		searchQuery: filters.searchQuery,
 		excludeStatus: [...filters.excludeStatus],
 		typeFilter: [...filters.typeFilter],
+		projectFilter: [...filters.projectFilter],
 		priorityFilter: filters.priorityFilter,
 		labelFilter: [...filters.labelFilter],
 		labelMatch: filters.labelMatch,
@@ -153,6 +158,7 @@ export function filterTasksForKanban(
 		!filters.searchQuery.trim() &&
 		filters.excludeStatus.length === 0 &&
 		(filters.typeFilter?.length ?? 0) === 0 &&
+		(filters.projectFilter?.length ?? 0) === 0 &&
 		!filters.priorityFilter &&
 		filters.labelFilter.length === 0 &&
 		!filters.milestoneFilter
@@ -161,12 +167,13 @@ export function filterTasksForKanban(
 	}
 
 	const searchIndex = createTaskSearchIndex(tasks);
-	const filteredTasks = applySharedTaskFilters(
+	const filteredTasks = applyTaskFilters(
 		tasks,
 		{
 			query: filters.searchQuery,
 			excludeStatus: filters.excludeStatus,
 			type: filters.typeFilter,
+			project: filters.projectFilter,
 			priority: filters.priorityFilter || undefined,
 			labels: filters.labelFilter,
 			labelMatch: filters.labelMatch ?? "any",
@@ -185,6 +192,7 @@ export function createUnifiedViewFilters(filter: UnifiedViewOptions["filter"] | 
 		statusFilter: Array.isArray(status) ? [...status] : status ? [status] : [],
 		excludeStatus: [...(filter?.excludeStatus || [])],
 		typeFilter: [...(filter?.type || [])],
+		projectFilter: [...(filter?.project || [])],
 		priorityFilter: filter?.priority || "",
 		labelFilter: [...(filter?.labels || [])],
 		labelMatch: filter?.labelMatch ?? "any",
@@ -203,6 +211,7 @@ export function mergeUnifiedViewFilters(
 		statusFilter: update.statusFilter,
 		excludeStatus: [...(update.excludeStatus ?? current.excludeStatus)],
 		typeFilter: [...(update.typeFilter ?? current.typeFilter)],
+		projectFilter: [...(update.projectFilter ?? current.projectFilter)],
 		priorityFilter: update.priorityFilter,
 		labelFilter: [...update.labelFilter],
 		labelMatch: update.labelMatch ?? current.labelMatch ?? "any",
@@ -279,6 +288,7 @@ export async function createTaskFromBoard(
  * Main unified view controller that handles Tab switching between views
  */
 export async function runUnifiedView(options: UnifiedViewOptions): Promise<void> {
+	const releaseTuiInput = keepTuiInputAlive();
 	try {
 		const {
 			tasks: loadedTasks,
@@ -420,7 +430,6 @@ export async function runUnifiedView(options: UnifiedViewOptions): Promise<void>
 		});
 
 		process.on("exit", () => configWatcher.stop());
-
 		// Function to show task view
 		const showTaskView = async (): Promise<ViewResult> => {
 			const availableTasks = tasks.filter((t) => t.id && t.id.trim() !== "" && hasAnyPrefix(t.id));
@@ -468,6 +477,7 @@ export async function runUnifiedView(options: UnifiedViewOptions): Promise<void>
 					statusFilter: currentFilters.statusFilter,
 					excludeStatus: currentFilters.excludeStatus,
 					typeFilter: currentFilters.typeFilter,
+					projectFilter: currentFilters.projectFilter,
 					priorityFilter: currentFilters.priorityFilter,
 					labelFilter: currentFilters.labelFilter,
 					labelMatch: currentFilters.labelMatch,
@@ -535,6 +545,7 @@ export async function runUnifiedView(options: UnifiedViewOptions): Promise<void>
 							statusFilter: currentFilters.statusFilter,
 							excludeStatus: filters.excludeStatus,
 							typeFilter: [...filters.typeFilter],
+							projectFilter: [...filters.projectFilter],
 							priorityFilter: filters.priorityFilter,
 							labelFilter: [...filters.labelFilter],
 							labelMatch: filters.labelMatch ?? currentFilters.labelMatch ?? "any",
@@ -554,6 +565,7 @@ export async function runUnifiedView(options: UnifiedViewOptions): Promise<void>
 					projectName: config?.projectName,
 					priorities: config?.priorities,
 					types: config?.types,
+					projects: config?.projects,
 					hideEmptyColumns: config?.hideEmptyColumns ?? false,
 					onSync: syncInteractiveView,
 					createTask: async (input) => createTaskFromBoard(options.core, input, taskUpdateCallbacks.onTaskAdded),
@@ -608,5 +620,7 @@ export async function runUnifiedView(options: UnifiedViewOptions): Promise<void>
 	} catch (error) {
 		console.error(error instanceof Error ? error.message : error);
 		process.exit(1);
+	} finally {
+		releaseTuiInput();
 	}
 }

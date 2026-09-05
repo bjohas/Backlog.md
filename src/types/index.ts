@@ -2,6 +2,13 @@
 export type TaskStatus = string;
 
 /**
+ * How a multi-label filter is combined. Interactive multi-select pickers use "any" so adding a
+ * label widens the result set; callers that pass an explicitly typed label list (the CLI
+ * `--labels` flag and the MCP `labels` argument) use "all" so every listed label is required.
+ */
+export type LabelMatchMode = "any" | "all";
+
+/**
  * Entity types in the backlog system.
  * Used for ID generation and prefix resolution.
  */
@@ -69,6 +76,8 @@ export interface Task {
 	priority?: string;
 	/** Semantic task type (e.g. bug, feature). Allowed values come from config `types` (defaults to DEFAULT_TASK_TYPES); absent means untyped. */
 	type?: string;
+	/** Monorepo project/component this task belongs to. Allowed values come from config `projects`; absent config means the field is unusable. */
+	project?: string;
 	branch?: string;
 	ordinal?: number;
 	filePath?: string;
@@ -111,6 +120,7 @@ export interface TaskCreateInput {
 	status?: TaskStatus;
 	priority?: string;
 	type?: string;
+	project?: string;
 	ordinal?: number;
 	milestone?: string;
 	labels?: string[];
@@ -136,6 +146,7 @@ export interface TaskUpdateInput {
 	status?: TaskStatus;
 	priority?: string;
 	type?: string;
+	project?: string | null;
 	milestone?: string | null;
 	labels?: string[];
 	addLabels?: string[];
@@ -182,9 +193,12 @@ export interface TaskListFilter {
 	assignee?: string;
 	unassigned?: boolean;
 	priority?: string;
+	project?: string | string[];
 	milestone?: string;
 	parentTaskId?: string;
 	labels?: string[];
+	/** Defaults to "any"; callers passing an explicitly typed label list use "all". */
+	labelMatch?: LabelMatchMode;
 }
 
 export interface Decision {
@@ -257,8 +271,11 @@ export interface SearchFilters {
 	excludeStatus?: string | string[];
 	type?: string | string[];
 	priority?: SearchPriorityFilter | SearchPriorityFilter[];
+	project?: string | string[];
 	assignee?: string | string[];
 	labels?: string | string[];
+	/** Defaults to "any"; callers passing an explicitly typed label list use "all". */
+	labelMatch?: LabelMatchMode;
 	modifiedFiles?: string | string[];
 }
 
@@ -333,6 +350,8 @@ export interface BacklogConfig {
 	types?: string[];
 	/** Ordered task priority labels. Defaults to High, Medium, Low when not configured. */
 	priorities?: string[];
+	/** Allowed monorepo project/component values. No default; the `project` field is unusable until this is configured. */
+	projects?: string[];
 	/** @deprecated Milestones are sourced from milestone files, not config. */
 	milestones?: string[];
 	definitionOfDone?: string[];

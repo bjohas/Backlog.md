@@ -33,14 +33,12 @@ const hasTaskSearchFilters = (parsedQuery: ReturnType<typeof parseSearchCommandQ
 	);
 };
 
-const LoadingPhase = ({ message, className }: { message?: string | null; className: string }) => (
+const LoadingPhase = ({ className }: { className: string }) => (
 	<p className={className} role="status">
-		{message ?? (
-			<span
-				className="inline-block h-3 w-32 animate-pulse rounded bg-gray-300 dark:bg-gray-700"
-				aria-label="Loading content"
-			/>
-		)}
+		<span
+			className="inline-block h-3 w-32 animate-pulse rounded bg-gray-300 dark:bg-gray-700"
+			aria-label="Loading content"
+		/>
 	</p>
 );
 
@@ -260,7 +258,6 @@ interface SideNavigationProps {
 	docs: Document[];
 	decisions: Decision[];
 	isLoading: boolean;
-	loadingMessage?: string | null;
 	error?: Error | null;
 	onRetry?: () => void;
 	onRefreshData: () => Promise<void>;
@@ -270,9 +267,8 @@ const SideNavigation = memo(function SideNavigation({
 	taskCount,
 	docs, 
 	decisions, 
-	isLoading, 
-	loadingMessage,
-	error, 
+	isLoading,
+	error,
 	onRetry
 }: SideNavigationProps) {
 	const [isCollapsed, setIsCollapsed] = useState(() => {
@@ -434,13 +430,13 @@ const SideNavigation = memo(function SideNavigation({
 		if (!searchQuery.trim()) {
 			return [];
 		}
-		// [FORK] No extra score cutoff: Fuse blends several weighted keys (title,
-		// bodyText, id, ...) into one score, so a result that matches well on one
-		// key but poorly on others can score well above any small constant even
-		// for an exact substring hit in the title - on a large, text-heavy
-		// project (170+ tasks) this hid most real matches. The server's own
-		// Fuse threshold already decided these are matches by returning them at
-		// all; sorting + slicing to 5 is enough to keep the dropdown short.
+		// No extra score cutoff: Fuse blends several weighted keys (title,
+		// bodyText, id, ...) into one score, so a result that matches well on
+		// one key but poorly on others can score well above any small constant
+		// even for an exact substring hit in the title - on a large,
+		// text-heavy project this hid most real matches. The server's own
+		// Fuse threshold already decided these are matches by returning them
+		// at all; sorting + slicing to 5 is enough to keep the dropdown short.
 		const sorted = [...searchResults].sort((a, b) => {
 			const scoreA = a.score ?? Number.POSITIVE_INFINITY;
 			const scoreB = b.score ?? Number.POSITIVE_INFINITY;
@@ -643,7 +639,7 @@ const SideNavigation = memo(function SideNavigation({
 							</span>
 						</div>
 						{isLoading && (
-							<LoadingPhase message={loadingMessage} className="mt-2 text-xs text-gray-500 dark:text-gray-400" />
+							<LoadingPhase className="mt-2 text-xs text-gray-500 dark:text-gray-400" />
 						)}
 					</div>
 				)}
@@ -764,7 +760,7 @@ const SideNavigation = memo(function SideNavigation({
 							{!isDocsCollapsed && (
 								<div className="space-y-1">
 									{isLoading ? (
-										<LoadingPhase message={loadingMessage} className="px-3 py-2 text-sm text-gray-500 dark:text-gray-400" />
+										<LoadingPhase className="px-3 py-2 text-sm text-gray-500 dark:text-gray-400" />
 									) : error ? (
 										<p className="px-3 py-2 text-sm text-gray-500 dark:text-gray-400">Documents unavailable</p>
 									) : filteredDocs.length === 0 ? (
@@ -832,7 +828,7 @@ const SideNavigation = memo(function SideNavigation({
 							{!isDecisionsCollapsed && (
 								<div className="space-y-1">
 									{isLoading ? (
-										<LoadingPhase message={loadingMessage} className="px-3 py-2 text-sm text-gray-500 dark:text-gray-400" />
+										<LoadingPhase className="px-3 py-2 text-sm text-gray-500 dark:text-gray-400" />
 									) : error ? (
 										<p className="px-3 py-2 text-sm text-gray-500 dark:text-gray-400">Decisions unavailable</p>
 									) : filteredDecisions.length === 0 ? (

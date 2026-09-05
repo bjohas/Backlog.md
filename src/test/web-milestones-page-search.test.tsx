@@ -4,8 +4,10 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter } from "react-router-dom";
 import type { Milestone, Task } from "../types/index.ts";
+import { createTaskSearchIndex } from "../utils/task-search.ts";
 import MilestonesPage from "../web/components/MilestonesPage.tsx";
 import { apiClient } from "../web/lib/api.ts";
+import { pinTimeZone } from "./pin-timezone.ts";
 import { setNativeInputValue } from "./react-dom-input.ts";
 
 const createTask = (overrides: Partial<Task>): Task => ({
@@ -23,7 +25,7 @@ const milestoneEntities: Milestone[] = [
 	{
 		id: "m-1",
 		title: "Release 1",
-		dueDate: "2026-09-01 12:00",
+		dueDate: "2026-09-01",
 		description: "Milestone: Release 1",
 		rawContent: "## Description\n\nMilestone: Release 1",
 	},
@@ -162,6 +164,9 @@ afterEach(() => {
 });
 
 describe("Web milestones page search", () => {
+	// The browser renders stored timestamps in the viewer's timezone, so pin one.
+	pinTimeZone("Asia/Tokyo");
+
 	it("renders a keyboard-focusable search input near the header", () => {
 		const container = renderPage();
 		expect(container.textContent).toContain("Milestones");
@@ -178,12 +183,19 @@ describe("Web milestones page search", () => {
 		const text = container.textContent ?? "";
 
 		expect(text.indexOf("Release 1")).toBeLessThan(text.indexOf("Release 2"));
-		expect(text).toContain("Due (UTC):");
+		expect(text).toContain("Due:");
 	});
 
-	it("uses the configured date format for milestone due dates", () => {
+	it("uses the configured date format for milestone due dates without a UTC hover", () => {
 		const container = renderPage(baseTasks, { dateFormat: "dd/mm/yyyy hh:mm" });
-		expect(container.textContent).toContain("Due (UTC): 01/09/2026 12:00");
+		// The viewer is pinned to UTC+9. A due date names a day, so it is neither converted nor
+		// given a time by the format's time part.
+		expect(container.textContent).toContain("Due: 01/09/2026");
+		const renderedDue = Array.from(container.querySelectorAll("span")).find(
+			(element) => element.textContent === "01/09/2026",
+		);
+		expect(renderedDue).toBeTruthy();
+		expect(renderedDue?.getAttribute("title")).toBeNull();
 	});
 
 	it("uses relative milestone due dates only when configured", () => {
@@ -217,7 +229,7 @@ describe("Web milestones page search", () => {
 	it("keeps unassigned section visible during search even when no unassigned tasks match", () => {
 		const container = renderPage();
 
-		setSearchValue(container, "task-404");
+		setSearchValue(container, "docs");
 		const filteredText = container.textContent ?? "";
 		expect(filteredText).toContain("Unassigned tasks");
 		expect(filteredText).toContain("No matching unassigned tasks.");
@@ -231,6 +243,26 @@ describe("Web milestones page search", () => {
 		expect(restoredText).toContain("Setup authentication flow");
 		expect(restoredText).toContain("Deploy pipeline");
 		expect(restoredText).toContain("Draft release notes");
+	});
+
+	it("matches exactly what the shared task search matches for the same query", () => {
+		for (const query of ["authentication", "docs", "pipeline", "release", "task-404", "zzzz-no-match"]) {
+			const expected = new Set(
+				createTaskSearchIndex(baseTasks)
+					.search({ query })
+					.map((task) => task.id),
+			);
+			const container = renderPage();
+			setSearchValue(container, query);
+			const text = container.textContent ?? "";
+			for (const task of baseTasks) {
+				expect({ query, id: task.id, shown: text.includes(task.id) }).toEqual({
+					query,
+					id: task.id,
+					shown: expected.has(task.id),
+				});
+			}
+		}
 	});
 
 	it("no-match search keeps milestone and unassigned sections visible", () => {
@@ -300,13 +332,14 @@ describe("Web milestones page search", () => {
 		expect(input).toBeTruthy();
 		setInputValue(input as HTMLInputElement, "Release 1.1");
 		const dueDateInput = container.querySelector("#edit-milestone-due-date") as HTMLInputElement | null;
-		expect(dueDateInput?.value).toBe("2026-09-01T12:00");
-		setInputValue(dueDateInput as HTMLInputElement, "2026-09-02T13:30");
+		expect(dueDateInput?.type).toBe("date");
+		expect(dueDateInput?.value).toBe("2026-09-01");
+		setInputValue(dueDateInput as HTMLInputElement, "2026-09-02");
 		await submitForm(input?.closest("form") as HTMLFormElement);
 
 		expect(updateArgs?.[0]).toBe("m-1");
 		expect(updateArgs?.[1]).toBe("Release 1.1");
-		expect(updateArgs?.[2]).toBe("2026-09-02T13:30");
+		expect(updateArgs?.[2]).toBe("2026-09-02");
 		expect(refreshCount).toBe(1);
 	});
 

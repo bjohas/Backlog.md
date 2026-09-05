@@ -162,7 +162,7 @@ describe("backlog doctor", () => {
 			}
 			const output = `${result.stdout}${result.stderr}`;
 			expect(result.exitCode).toBe(1);
-			expect(output).not.toContain("No duplicate task, document, decision, or draft IDs found.");
+			expect(output).not.toContain("No duplicate IDs, self-referential dependencies, or dependency cycles found.");
 			expect(output).toContain("Unreadable draft files or directories");
 			expect(output).toContain("backlog/drafts");
 		},
@@ -231,6 +231,68 @@ describe("backlog doctor", () => {
 			expect(output).not.toContain("backlog doctor --fix");
 		},
 	);
+
+	it("mentions a task prefix that collides with a reserved system prefix", async () => {
+		await removeDuplicateTasks();
+		const config = await core.filesystem.loadConfig();
+		if (!config) throw new Error("Missing test config");
+		config.prefixes = { task: "draft" };
+		await core.filesystem.saveConfig(config);
+
+		const result = await $`bun ${cliPath} doctor`.cwd(testDir).quiet().nothrow();
+		const output = `${result.stdout}${result.stderr}`;
+		expect(result.exitCode).toBe(1);
+		expect(output).toContain('Task prefix "draft" collides with a reserved prefix');
+		expect(output).toContain("There is no automated migration");
+		expect(output.toLowerCase()).not.toContain("re-initialize");
+		expect(output).not.toContain("No duplicate IDs, self-referential dependencies, or dependency cycles found.");
+	});
+
+	it("does not auto-repair duplicates when the task prefix is reserved", async () => {
+		await unlink(join(core.filesystem.tasksDir, "task-1 - Alpha.md"));
+		await unlink(join(core.filesystem.tasksDir, "task-01 - Beta.md"));
+		await unlink(join(core.filesystem.completedDir, "task-001 - Gamma.md"));
+		const config = await core.filesystem.loadConfig();
+		if (!config) throw new Error("Missing test config");
+		config.prefixes = { task: "draft" };
+		await core.filesystem.saveConfig(config);
+
+		const draftTaskAlpha = join(core.filesystem.tasksDir, "draft-1 - Alpha.md");
+		const draftTaskBeta = join(core.filesystem.tasksDir, "draft-01 - Beta.md");
+		const realDraft = join(await core.filesystem.getDraftsDir(), "draft-2 - Real draft.md");
+		await Bun.write(draftTaskAlpha, serializeTask(makeTask("DRAFT-1", "Alpha")));
+		await Bun.write(draftTaskBeta, serializeTask(makeTask("DRAFT-01", "Beta")));
+		await Bun.write(realDraft, serializeTask(makeTask("DRAFT-2", "Real draft")));
+		const alphaBefore = await Bun.file(draftTaskAlpha).text();
+		const betaBefore = await Bun.file(draftTaskBeta).text();
+		const draftBefore = await Bun.file(realDraft).text();
+
+		const result = await $`bun ${cliPath} doctor --fix --yes`.cwd(testDir).quiet().nothrow();
+		const output = `${result.stdout}${result.stderr}`;
+		expect(result.exitCode).toBe(1);
+		expect(output).toContain('Task prefix "draft" collides with a reserved prefix');
+		expect(output).toContain("Resolve the reserved task prefix before running --fix.");
+		expect(output).not.toContain("Repaired");
+		expect(await Bun.file(draftTaskAlpha).text()).toBe(alphaBefore);
+		expect(await Bun.file(draftTaskBeta).text()).toBe(betaBefore);
+		expect(await Bun.file(realDraft).text()).toBe(draftBefore);
+	});
+
+	it("does not fail task list solely because the task prefix is reserved", async () => {
+		await unlink(join(core.filesystem.tasksDir, "task-1 - Alpha.md"));
+		await unlink(join(core.filesystem.tasksDir, "task-01 - Beta.md"));
+		await unlink(join(core.filesystem.completedDir, "task-001 - Gamma.md"));
+		const config = await core.filesystem.loadConfig();
+		if (!config) throw new Error("Missing test config");
+		config.prefixes = { task: "draft" };
+		await core.filesystem.saveConfig(config);
+		await Bun.write(join(core.filesystem.tasksDir, "draft-1 - Hello.md"), serializeTask(makeTask("DRAFT-1", "Hello")));
+
+		const result = await $`bun ${cliPath} task list --plain`.cwd(testDir).quiet().nothrow();
+		const output = `${result.stdout}${result.stderr}`;
+		expect(result.exitCode).toBe(0);
+		expect(output).toContain("Hello");
+	});
 });
 
 describe("CLI collision safety", () => {
@@ -279,6 +341,109 @@ describe("CLI collision safety", () => {
 	});
 });
 
+describe("dependency defects", () => {
+	beforeEach(async () => {
+		await removeDuplicateTasks();
+	});
+
+	it("reports existing self-dependencies and cycles without changing files", async () => {
+		await Bun.write(
+			join(core.filesystem.tasksDir, "task-2 - Selfy.md"),
+			serializeTask({ ...makeTask("TASK-2", "Selfy"), dependencies: ["task-2"] }),
+		);
+		await Bun.write(
+			join(core.filesystem.tasksDir, "task-3 - CycleA.md"),
+			serializeTask({ ...makeTask("TASK-3", "CycleA"), dependencies: ["TASK-4", "TASK-5"] }),
+		);
+		await Bun.write(
+			join(core.filesystem.tasksDir, "task-4 - CycleB.md"),
+			serializeTask({ ...makeTask("TASK-4", "CycleB"), dependencies: ["TASK-3"] }),
+		);
+		await Bun.write(
+			join(core.filesystem.tasksDir, "task-5 - CycleC.md"),
+			serializeTask({ ...makeTask("TASK-5", "CycleC"), dependencies: ["TASK-3"] }),
+		);
+
+		const result = await $`bun ${cliPath} doctor`.cwd(testDir).quiet().nothrow();
+		const output = `${result.stdout}${result.stderr}`;
+		expect(result.exitCode).toBe(1);
+		expect(output).toContain("Self-referential dependencies (diagnostic only):");
+		expect(output).toContain('TASK-2 depends on itself (recorded as "task-2")');
+		expect(output).toContain("Dependency cycles (diagnostic only):");
+		expect(output).toContain("TASK-3 -> TASK-4 -> TASK-3");
+		// One cycle is one finding, not one per participating task.
+		expect(output).not.toContain("TASK-4 -> TASK-3 -> TASK-4");
+		// A distinct cycle sharing TASK-3 is still its own finding.
+		expect(output).toContain("TASK-5 -> TASK-3 -> TASK-5");
+		expect(output).not.toContain("No duplicate IDs, self-referential dependencies, or dependency cycles found.");
+
+		// Report-only: the defective files are untouched.
+		expect((await core.filesystem.loadTask("TASK-2"))?.dependencies).toEqual(["task-2"]);
+		expect((await core.filesystem.loadTask("TASK-3"))?.dependencies).toEqual(["TASK-4", "TASK-5"]);
+	});
+
+	it("keeps a non-zero exit when duplicates are repaired but dependency findings remain", async () => {
+		await writeDuplicateTasks();
+		await Bun.write(
+			join(core.filesystem.tasksDir, "task-7 - Selfy.md"),
+			serializeTask({ ...makeTask("TASK-7", "Selfy"), dependencies: ["TASK-7"] }),
+		);
+
+		const result = await $`bun ${cliPath} doctor --fix --yes`.cwd(testDir).quiet().nothrow();
+		const output = `${result.stdout}${result.stderr}`;
+		expect(result.exitCode).toBe(1);
+		expect(output).toContain("Repaired 2 duplicate task files");
+		expect(output).toContain("Dependency findings remain diagnostic-only and still require manual repair.");
+		expect((await core.filesystem.loadTask("TASK-7"))?.dependencies).toEqual(["TASK-7"]);
+	});
+
+	it("exits zero when the duplicate repair itself resolves the dependency finding", async () => {
+		await writeDuplicateTasks();
+		// Beta depends on its own duplicate ID; renaming Beta re-points the reference at Alpha.
+		await Bun.write(
+			join(core.filesystem.tasksDir, "task-01 - Beta.md"),
+			serializeTask({ ...makeTask("TASK-01", "Beta"), dependencies: ["TASK-01"] }),
+		);
+
+		const result = await $`bun ${cliPath} doctor --fix --yes`.cwd(testDir).quiet().nothrow();
+		const output = `${result.stdout}${result.stderr}`;
+		expect(result.exitCode).toBe(0);
+		expect(output).toContain("Repaired 2 duplicate task files");
+		expect(output).toContain("TASK-01 depends on itself");
+		expect(output).not.toContain("Dependency findings remain diagnostic-only");
+	});
+
+	it("prints the dependency defect the repair itself materializes", async () => {
+		await writeDuplicateTasks();
+		// Beta's dangling reference names the ID the repair allocates to Beta, so the defect exists
+		// only in the repaired corpus; the post-repair report must name it.
+		await Bun.write(
+			join(core.filesystem.tasksDir, "task-01 - Beta.md"),
+			serializeTask({ ...makeTask("TASK-01", "Beta"), dependencies: ["TASK-2"] }),
+		);
+
+		const result = await $`bun ${cliPath} doctor --fix --yes`.cwd(testDir).quiet().nothrow();
+		const output = `${result.stdout}${result.stderr}`;
+		expect(result.exitCode).toBe(1);
+		expect(output).toContain("Repaired 2 duplicate task files");
+		expect(output).toContain("TASK-2 depends on itself");
+		expect(output).toContain("Dependency findings remain diagnostic-only and still require manual repair.");
+	});
+
+	it("refuses --fix for dependency findings instead of repairing them", async () => {
+		await Bun.write(
+			join(core.filesystem.tasksDir, "task-2 - Selfy.md"),
+			serializeTask({ ...makeTask("TASK-2", "Selfy"), dependencies: ["TASK-2"] }),
+		);
+
+		const result = await $`bun ${cliPath} doctor --fix --yes`.cwd(testDir).quiet().nothrow();
+		const output = `${result.stdout}${result.stderr}`;
+		expect(result.exitCode).toBe(1);
+		expect(output).toContain("The reported findings cannot be repaired automatically; resolve them by hand.");
+		expect((await core.filesystem.loadTask("TASK-2"))?.dependencies).toEqual(["TASK-2"]);
+	});
+});
+
 describe("document and decision identity", () => {
 	beforeEach(async () => {
 		await removeDuplicateTasks();
@@ -291,7 +456,7 @@ describe("document and decision identity", () => {
 		const result = await $`bun ${cliPath} doctor`.cwd(testDir).quiet().nothrow();
 		const output = `${result.stdout}${result.stderr}`;
 		expect(result.exitCode).toBe(0);
-		expect(output).toContain("No duplicate task, document, decision, or draft IDs found.");
+		expect(output).toContain("No duplicate IDs, self-referential dependencies, or dependency cycles found.");
 	});
 
 	it("reports duplicate and drifted draft identities and contributes to the exit code", async () => {
@@ -365,7 +530,7 @@ describe("document and decision identity", () => {
 		const result = await $`bun ${cliPath} doctor`.cwd(testDir).quiet().nothrow();
 		const output = `${result.stdout}${result.stderr}`;
 		expect(result.exitCode).toBe(1);
-		expect(output).not.toContain("No duplicate task, document, decision, or draft IDs found.");
+		expect(output).not.toContain("No duplicate IDs, self-referential dependencies, or dependency cycles found.");
 		expect(output).toContain("Unreadable document files");
 		expect(output).toContain("backlog/docs/doc-2 - Broken.md");
 		expect(output).toContain("Unreadable decision files");
@@ -394,7 +559,7 @@ describe("document and decision identity", () => {
 
 		const output = `${result.stdout}${result.stderr}`;
 		expect(result.exitCode).toBe(1);
-		expect(output).not.toContain("No duplicate task, document, decision, or draft IDs found.");
+		expect(output).not.toContain("No duplicate IDs, self-referential dependencies, or dependency cycles found.");
 		expect(output).toContain("Unreadable document files or directories");
 		expect(output).toContain("backlog/docs");
 	});

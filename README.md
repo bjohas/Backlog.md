@@ -58,7 +58,7 @@ Backlog.md itself. The full task ledger lives in this repo's [backlog folder](ba
 
 * ✅ **Acceptance criteria & Definition of Done** -- verifiable scope per task, plus a reusable DoD checklist for every new task
 
-* 🎯 **Milestones & dependencies** -- structure bigger efforts and make execution order reviewable
+* 🎯 **Milestones & dependencies** -- structure bigger efforts and make execution order reviewable, with task detail showing what a task waits on and what waits on it
 
 * 📊 **Terminal Kanban** -- `backlog board` paints a live board in your shell; `backlog board export` creates shareable markdown reports
 
@@ -202,6 +202,7 @@ backlog browser --no-open
 
 **Features:**
 - Interactive Kanban board with drag-and-drop
+- Multi-select cards to move several tasks to one column
 - Task creation and editing with forms
 - Interactive acceptance criteria editor with checklists
 - Real-time updates across all views

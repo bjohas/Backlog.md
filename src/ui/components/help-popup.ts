@@ -16,6 +16,7 @@ const BOARD_SHORTCUTS: Shortcut[] = [
 	{ key: "R", desc: "Synchronize current branch" },
 	{ key: "/", desc: "Search tasks" },
 	{ key: "T", desc: "Filter by Type" },
+	{ key: "V", desc: "Filter by Project" },
 	{ key: "P", desc: "Filter by Priority" },
 	{ key: "I", desc: "Filter by Milestone" },
 	{ key: "F", desc: "Filter by Labels" },
@@ -23,7 +24,7 @@ const BOARD_SHORTCUTS: Shortcut[] = [
 	{ key: "↑↓", desc: "Navigate tasks" },
 	{ key: "Enter", desc: "View task details" },
 	{ key: "E", desc: "Edit task" },
-	{ key: "M", desc: "Move task (Status/Order)" },
+	{ key: "M", desc: "Move tasks (Shift+M selects more in move mode)" },
 	{ key: "C", desc: "Complete task" },
 	{ key: "A", desc: "Archive task" },
 	{ key: "Y", desc: "Yank (Copy) task ID" },
@@ -37,6 +38,7 @@ const TASK_LIST_SHORTCUTS: Shortcut[] = [
 	{ key: "/", desc: "Search tasks" },
 	{ key: "S", desc: "Filter by Status" },
 	{ key: "T", desc: "Filter by Type" },
+	{ key: "V", desc: "Filter by Project" },
 	{ key: "P", desc: "Filter by Priority" },
 	{ key: "I", desc: "Filter by Milestone" },
 	{ key: "L", desc: "Filter by Labels" },
@@ -51,8 +53,12 @@ const TASK_LIST_SHORTCUTS: Shortcut[] = [
 	{ key: "q/Esc", desc: "Quit / Close" },
 ];
 
-export function getHelpShortcuts(context: HelpPopupContext = "board"): Shortcut[] {
-	return context === "task-list" ? TASK_LIST_SHORTCUTS : BOARD_SHORTCUTS;
+export function getHelpShortcuts(
+	context: HelpPopupContext = "board",
+	options: { hasProjects?: boolean } = {},
+): Shortcut[] {
+	const shortcuts = context === "task-list" ? TASK_LIST_SHORTCUTS : BOARD_SHORTCUTS;
+	return options.hasProjects ? shortcuts : shortcuts.filter((shortcut) => shortcut.key !== "V");
 }
 
 /** Popup rows spent on borders, the top spacer and the help line, leaving one row per shortcut. */
@@ -69,10 +75,14 @@ export function getHelpPopupHeight(shortcutCount: number, screenHeight: number):
 	return Math.min(boundedScreenHeight, preferredHeight);
 }
 
-export async function openHelpPopup(screen: ScreenInterface, context: HelpPopupContext = "board"): Promise<void> {
+export async function openHelpPopup(
+	screen: ScreenInterface,
+	context: HelpPopupContext = "board",
+	options: { hasProjects?: boolean } = {},
+): Promise<void> {
 	return new Promise<void>((resolve) => {
 		let settled = false;
-		const shortcuts = getHelpShortcuts(context);
+		const shortcuts = getHelpShortcuts(context, options);
 		let popupHeight = getHelpPopupHeight(shortcuts.length, screen.height);
 		const { popup, close, reflow } = createPopupChrome({
 			screen,
