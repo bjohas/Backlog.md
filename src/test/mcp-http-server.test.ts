@@ -4,6 +4,17 @@ import { McpServer } from "../mcp/server.ts";
 import { createUniqueTestDir, initializeFilesystemTestProject, safeCleanup } from "./test-utils.ts";
 
 const TOKEN = "test-bearer-token";
+const READ_ONLY_TOOL_NAMES = [
+	"definition_of_done_defaults_get",
+	"document_list",
+	"document_search",
+	"document_view",
+	"get_backlog_instructions",
+	"milestone_list",
+	"task_list",
+	"task_search",
+	"task_view",
+];
 let testDir: string;
 let remoteServer: RemoteMcpServerHandle | undefined;
 
@@ -67,23 +78,48 @@ describe("remote MCP Streamable HTTP server", () => {
 		await safeCleanup(testDir);
 	});
 
-	it("rejects unauthenticated requests before opening an MCP session", async () => {
+	it("requires the bearer token for POST, GET, and DELETE before session lookup", async () => {
 		remoteServer = startRemoteMcpServer({ projectRoot: testDir, token: TOKEN, port: 0 });
+		const sessionId = await initializeSession(remoteServer.url);
 
-		const response = await fetch(remoteServer.url, { method: "POST", body: "{}" });
+		const unauthenticated = await Promise.all([
+			fetch(remoteServer.url, { method: "POST", body: "{}" }),
+			fetch(remoteServer.url, { method: "GET", headers: { "mcp-session-id": sessionId } }),
+			fetch(remoteServer.url, { method: "DELETE", headers: { "mcp-session-id": sessionId } }),
+		]);
 
-		expect(response.status).toBe(401);
+		for (const response of unauthenticated) {
+			expect(response.status).toBe(401);
+		}
+		expect(remoteServer.sessionManager.sessionCount).toBe(1);
+
+		const deleted = await fetch(remoteServer.url, {
+			method: "DELETE",
+			headers: { authorization: `Bearer ${TOKEN}`, "mcp-session-id": sessionId },
+		});
+		expect(deleted.status).toBe(200);
 		expect(remoteServer.sessionManager.sessionCount).toBe(0);
+
+		const afterDeletion = await fetch(remoteServer.url, {
+			method: "POST",
+			headers: {
+				authorization: `Bearer ${TOKEN}`,
+				"content-type": "application/json",
+				"mcp-session-id": sessionId,
+			},
+			body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }),
+		});
+		expect(afterDeletion.status).toBe(404);
 	});
 
-	it("serves only read-only tools by default", async () => {
+	it("registers exactly the audited read-only tool surface by default", async () => {
 		remoteServer = startRemoteMcpServer({ projectRoot: testDir, token: TOKEN, port: 0 });
 
 		const sessionId = await initializeSession(remoteServer.url);
 		const body = await listTools(remoteServer.url, sessionId);
+		const toolNames = Array.from(body.matchAll(/"name":"([^"]+)"/g), (match) => match[1]).sort();
 
-		expect(body).toContain('"task_list"');
-		expect(body).not.toContain('"task_create"');
+		expect(toolNames).toEqual(READ_ONLY_TOOL_NAMES);
 	});
 
 	it("exposes mutating tools only with allowWrite", async () => {
@@ -94,5 +130,26 @@ describe("remote MCP Streamable HTTP server", () => {
 
 		expect(body).toContain('"task_list"');
 		expect(body).toContain('"task_create"');
+	});
+
+	it("keeps a remote session on its pinned project after a roots change notification", async () => {
+		remoteServer = startRemoteMcpServer({ projectRoot: testDir, token: TOKEN, port: 0 });
+		const sessionId = await initializeSession(remoteServer.url);
+
+		const notification = await fetch(remoteServer.url, {
+			method: "POST",
+			headers: {
+				authorization: `Bearer ${TOKEN}`,
+				"content-type": "application/json",
+				accept: "application/json, text/event-stream",
+				"mcp-session-id": sessionId,
+			},
+			body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/roots/list_changed", params: {} }),
+		});
+		expect(notification.status).toBe(202);
+
+		const body = await listTools(remoteServer.url, sessionId);
+		const toolNames = Array.from(body.matchAll(/"name":"([^"]+)"/g), (match) => match[1]).sort();
+		expect(toolNames).toEqual(READ_ONLY_TOOL_NAMES);
 	});
 });

@@ -52,7 +52,7 @@ function unauthorizedResponse(): Response {
 export function startRemoteMcpServer(options: RemoteMcpServerOptions): RemoteMcpServerHandle {
 	const sessionManager = new McpHttpSessionManager({
 		projectRoot: options.projectRoot,
-		readOnly: !options.allowWrite,
+		allowWrite: options.allowWrite ?? false,
 		debug: options.debug,
 	});
 
