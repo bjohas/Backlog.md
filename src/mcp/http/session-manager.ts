@@ -11,7 +11,7 @@
 import { randomUUID } from "node:crypto";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
-import { createRemoteMcpServer, type McpServer } from "../server.ts";
+import { createMcpServer, type McpServer } from "../server.ts";
 
 type Session = {
 	server: McpServer;
@@ -20,7 +20,7 @@ type Session = {
 
 export type McpHttpSessionManagerOptions = {
 	projectRoot: string;
-	allowWrite: boolean;
+	readOnly: boolean;
 	debug?: boolean;
 };
 
@@ -79,9 +79,10 @@ export class McpHttpSessionManager {
 	}
 
 	private async createSession(request: Request, parsedBody: unknown): Promise<Response> {
-		const server = await createRemoteMcpServer(this.options.projectRoot, {
+		const server = await createMcpServer(this.options.projectRoot, {
 			debug: this.options.debug,
-			allowWrite: this.options.allowWrite,
+			pinned: true,
+			readOnly: this.options.readOnly,
 		});
 
 		const transport = new WebStandardStreamableHTTPServerTransport({

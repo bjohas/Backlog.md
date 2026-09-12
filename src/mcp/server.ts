@@ -56,16 +56,15 @@ const APP_NAME = getPackageName();
 const INSTRUCTIONS =
 	"At the beginning of each session, list the available resources and read the first one to understand how to use Backlog.md for task management. Additional detailed guides are available as resources when needed.";
 
-type LocalServerInitOptions = {
+type ServerInitOptions = {
 	debug?: boolean;
 	/** When true (from --cwd/BACKLOG_CWD), the root is fixed and client roots are never consulted. */
 	pinned?: boolean;
-};
-
-type ConfiguredServerInitOptions = LocalServerInitOptions & {
 	/**
-	 * Internal registration policy for the dedicated remote factory. In this mode,
-	 * only audited tools declaring `readOnlyHint: true` enter the tool map.
+	 * When true, only tools annotated `readOnlyHint: true` are ever registered with the server.
+	 * Mutating tools are never added to the tool map, so they are absent from tools/list and
+	 * unreachable via tools/call regardless of client request content. Used by the remote HTTP
+	 * runtime's default (non `--allow-write`) permission level.
 	 */
 	readOnly?: boolean;
 };
@@ -534,31 +533,7 @@ export class McpServer extends Core {
  * in fallback mode with roots discovery enabled — the first request-scoped MCP
  * handler can then query client roots to find the correct project.
  */
-export async function createMcpServer(projectRoot: string, options: LocalServerInitOptions = {}): Promise<McpServer> {
-	return createConfiguredMcpServer(projectRoot, options);
-}
-
-/**
- * Creates the server used exclusively by remote Streamable HTTP sessions.
- *
- * The root is always pinned and the permission mode is fixed while this server
- * instance is built. The caller cannot alter either setting through MCP input.
- */
-export async function createRemoteMcpServer(
-	projectRoot: string,
-	options: { debug?: boolean; allowWrite: boolean },
-): Promise<McpServer> {
-	return createConfiguredMcpServer(projectRoot, {
-		debug: options.debug,
-		pinned: true,
-		readOnly: !options.allowWrite,
-	});
-}
-
-async function createConfiguredMcpServer(
-	projectRoot: string,
-	options: ConfiguredServerInitOptions = {},
-): Promise<McpServer> {
+export async function createMcpServer(projectRoot: string, options: ServerInitOptions = {}): Promise<McpServer> {
 	// We need to check config first to determine which instructions to use
 	const tempCore = new Core(projectRoot);
 	await tempCore.ensureConfigLoaded();
@@ -578,11 +553,7 @@ async function createConfiguredMcpServer(
 		}
 
 		if (options.debug) {
-			console.error(
-				options.pinned
-					? "MCP server initialised in fallback mode (root pinned)."
-					: "MCP server initialised in fallback mode (roots discovery enabled).",
-			);
+			console.error("MCP server initialised in fallback mode (roots discovery enabled).");
 		}
 
 		return server;
@@ -606,7 +577,7 @@ async function createConfiguredMcpServer(
 	}
 
 	if (options.debug) {
-		console.error("MCP server initialised.");
+		console.error("MCP server initialised (stdio transport only).");
 	}
 
 	return server;
