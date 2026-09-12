@@ -523,7 +523,6 @@ export class McpServer extends Core {
 			listPrompts: () => this.listPrompts(),
 			getPrompt: (request: { params: { name: string; arguments?: Record<string, unknown> } }) =>
 				this.getPrompt(request),
-			isRootsDiscoveryEnabled: () => this.rootsDiscoveryEnabled,
 		};
 	}
 }

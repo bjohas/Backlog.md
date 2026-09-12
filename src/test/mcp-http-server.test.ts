@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { type RemoteMcpServerHandle, startRemoteMcpServer } from "../mcp/http-server.ts";
-import { createRemoteMcpServer, McpServer } from "../mcp/server.ts";
+import { McpServer } from "../mcp/server.ts";
 import { createUniqueTestDir, initializeFilesystemTestProject, safeCleanup } from "./test-utils.ts";
 
 const TOKEN = "test-bearer-token";
@@ -132,13 +132,24 @@ describe("remote MCP Streamable HTTP server", () => {
 		expect(body).toContain('"task_create"');
 	});
 
-	it("disables roots discovery in the dedicated remote server factory", async () => {
-		const server = await createRemoteMcpServer(testDir, { allowWrite: false });
-		try {
-			expect(server.filesystem.rootDir).toBe(testDir);
-			expect(server.testInterface.isRootsDiscoveryEnabled()).toBe(false);
-		} finally {
-			await server.stop();
-		}
+	it("keeps a remote session on its pinned project after a roots change notification", async () => {
+		remoteServer = startRemoteMcpServer({ projectRoot: testDir, token: TOKEN, port: 0 });
+		const sessionId = await initializeSession(remoteServer.url);
+
+		const notification = await fetch(remoteServer.url, {
+			method: "POST",
+			headers: {
+				authorization: `Bearer ${TOKEN}`,
+				"content-type": "application/json",
+				accept: "application/json, text/event-stream",
+				"mcp-session-id": sessionId,
+			},
+			body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/roots/list_changed", params: {} }),
+		});
+		expect(notification.status).toBe(202);
+
+		const body = await listTools(remoteServer.url, sessionId);
+		const toolNames = Array.from(body.matchAll(/"name":"([^"]+)"/g), (match) => match[1]).sort();
+		expect(toolNames).toEqual(READ_ONLY_TOOL_NAMES);
 	});
 });
