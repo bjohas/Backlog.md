@@ -1,12 +1,15 @@
 /**
  * MCP Command Group - Model Context Protocol CLI commands.
  *
- * This simplified command set focuses on the stdio transport, which is the
- * only supported transport for Backlog.md's local MCP integration.
+ * `mcp start` is the stdio transport used by local desktop editor integrations.
+ * `mcp serve` is the remote Streamable HTTP runtime: a single pinned project,
+ * bound to loopback, gated by a required bearer token.
  */
 
 import type { Command } from "commander";
 import { isConfigValueError } from "../file-system/operations.ts";
+import { loadBearerToken, TokenFilePermissionError } from "../mcp/http/bearer-auth.ts";
+import { DEFAULT_MCP_HTTP_PORT, startRemoteMcpServer } from "../mcp/http-server.ts";
 import { createMcpServer } from "../mcp/server.ts";
 import { findBacklogRoot } from "../utils/find-backlog-root.ts";
 import { resolveRuntimeCwd } from "../utils/runtime-cwd.ts";
@@ -14,6 +17,14 @@ import { resolveRuntimeCwd } from "../utils/runtime-cwd.ts";
 type StartOptions = {
 	debug?: boolean;
 	cwd?: string;
+};
+
+type ServeOptions = {
+	debug?: boolean;
+	cwd: string;
+	port: string;
+	tokenFile: string;
+	allowWrite?: boolean;
 };
 
 /**
@@ -24,6 +35,7 @@ type StartOptions = {
 export function registerMcpCommand(program: Command): void {
 	const mcpCmd = program.command("mcp");
 	registerStartCommand(mcpCmd);
+	registerServeCommand(mcpCmd);
 }
 
 /**
@@ -106,6 +118,84 @@ function registerStartCommand(mcpCmd: Command): void {
 				} else {
 					const message = error instanceof Error ? error.message : String(error);
 					console.error(`Failed to start MCP server: ${message}`);
+				}
+				process.exit(1);
+			}
+		});
+}
+
+/**
+ * Register 'mcp serve' command for the remote Streamable HTTP transport.
+ *
+ * Unlike `mcp start`, the project root is always pinned to `--cwd`: roots
+ * discovery is never enabled, so no bearer-authenticated client can steer a
+ * remote session onto a different project by answering `roots/list`.
+ */
+function registerServeCommand(mcpCmd: Command): void {
+	mcpCmd
+		.command("serve")
+		.description("Serve the MCP server over Streamable HTTP on loopback, gated by a bearer token")
+		.requiredOption("--cwd <path>", "Project root to serve (pinned; required)")
+		.option("--port <port>", "TCP port to listen on", String(DEFAULT_MCP_HTTP_PORT))
+		.requiredOption("--token-file <path>", "Path to a file containing the bearer token (must be owner-only, chmod 600)")
+		.option("--allow-write", "Enable the full mutating tool set (default: read-only)", false)
+		.option("-d, --debug", "Enable debug logging", false)
+		.action(async (options: ServeOptions) => {
+			try {
+				const runtimeCwd = await resolveRuntimeCwd({ cwd: options.cwd });
+				const projectRoot = (await findBacklogRoot(runtimeCwd.cwd)) ?? runtimeCwd.cwd;
+				const token = await loadBearerToken(options.tokenFile);
+
+				const port = Number.parseInt(options.port, 10);
+				if (!Number.isInteger(port) || port < 0 || port > 65535) {
+					throw new Error(`Invalid --port value: ${options.port}`);
+				}
+
+				const handle = startRemoteMcpServer({
+					projectRoot,
+					token,
+					port,
+					allowWrite: options.allowWrite,
+					debug: options.debug,
+				});
+
+				console.error(
+					`Backlog.md MCP server listening on ${handle.url} (project: ${projectRoot}, ${
+						options.allowWrite ? "read-write" : "read-only"
+					})`,
+				);
+
+				let shutdownTriggered = false;
+				const shutdown = async (signal: string) => {
+					if (shutdownTriggered) {
+						return;
+					}
+					shutdownTriggered = true;
+					if (options.debug) {
+						console.error(`Received ${signal}, shutting down MCP HTTP server...`);
+					}
+					try {
+						await handle.stop();
+						process.exit(0);
+					} catch (error) {
+						console.error("Error during MCP HTTP server shutdown:", error);
+						process.exit(1);
+					}
+				};
+
+				process.once("SIGINT", () => shutdown("SIGINT"));
+				process.once("SIGTERM", () => shutdown("SIGTERM"));
+				if (process.platform !== "win32") {
+					process.once("SIGHUP", () => shutdown("SIGHUP"));
+				}
+			} catch (error) {
+				if (error instanceof TokenFilePermissionError) {
+					console.error(error.message);
+				} else if (isConfigValueError(error)) {
+					console.error(error.message);
+				} else {
+					const message = error instanceof Error ? error.message : String(error);
+					console.error(`Failed to start MCP HTTP server: ${message}`);
 				}
 				process.exit(1);
 			}

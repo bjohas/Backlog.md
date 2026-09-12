@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import {
 	CallToolRequestSchema,
 	ErrorCode,
@@ -59,14 +60,22 @@ type ServerInitOptions = {
 	debug?: boolean;
 	/** When true (from --cwd/BACKLOG_CWD), the root is fixed and client roots are never consulted. */
 	pinned?: boolean;
+	/**
+	 * When true, only tools annotated `readOnlyHint: true` are ever registered with the server.
+	 * Mutating tools are never added to the tool map, so they are absent from tools/list and
+	 * unreachable via tools/call regardless of client request content. Used by the remote HTTP
+	 * runtime's default (non `--allow-write`) permission level.
+	 */
+	readOnly?: boolean;
 };
 
 type ServerRequestExtra = RequestHandlerExtra<ServerRequest, ServerNotification>;
 
 export class McpServer extends Core {
 	private readonly server: Server;
-	private transport?: StdioServerTransport;
+	private transport?: Transport;
 	private stopping = false;
+	private readonly readOnly: boolean;
 
 	/** Debug log lines collected during roots discovery (exposed to init-required resource). */
 	public readonly debugLog: string[] = [];
@@ -90,9 +99,10 @@ export class McpServer extends Core {
 	private readonly resources = new Map<string, McpResourceHandler>();
 	private readonly prompts = new Map<string, McpPromptHandler>();
 
-	constructor(projectRoot: string, instructions: string, version = "0.0.0") {
+	constructor(projectRoot: string, instructions: string, version = "0.0.0", options: { readOnly?: boolean } = {}) {
 		super(projectRoot, { enableWatchers: true });
 		this.initialProjectRoot = projectRoot;
+		this.readOnly = options.readOnly ?? false;
 
 		this.server = new Server(
 			{
@@ -324,8 +334,15 @@ export class McpServer extends Core {
 
 	/**
 	 * Register a tool implementation with the server.
+	 *
+	 * In read-only mode, tools without `annotations.readOnlyHint === true` are silently
+	 * skipped: they never enter the tool map, so they are absent from tools/list and
+	 * calling them by name fails with "Tool not found" — the same as if they never existed.
 	 */
 	public addTool(tool: McpToolHandler): void {
+		if (this.readOnly && tool.annotations?.readOnlyHint !== true) {
+			return;
+		}
 		this.tools.set(tool.name, tool);
 	}
 
@@ -344,14 +361,15 @@ export class McpServer extends Core {
 	}
 
 	/**
-	 * Connect the server to the stdio transport.
+	 * Connect the server to a transport. Defaults to the stdio transport used by
+	 * `mcp start`; the remote HTTP runtime passes a per-session Streamable HTTP transport.
 	 */
-	public async connect(): Promise<void> {
+	public async connect(transport?: Transport): Promise<void> {
 		if (this.transport) {
 			return;
 		}
 
-		this.transport = new StdioServerTransport();
+		this.transport = transport ?? new StdioServerTransport();
 		await this.server.connect(this.transport);
 	}
 
@@ -521,7 +539,7 @@ export async function createMcpServer(projectRoot: string, options: ServerInitOp
 	await tempCore.ensureConfigLoaded();
 	const [config, version] = await Promise.all([tempCore.filesystem.loadConfig(), getVersion()]);
 
-	const server = new McpServer(projectRoot, INSTRUCTIONS, version);
+	const server = new McpServer(projectRoot, INSTRUCTIONS, version, { readOnly: options.readOnly });
 
 	// Graceful fallback: if config doesn't exist, provide init-required resource
 	// and enable roots discovery so the server can find the project via MCP roots
