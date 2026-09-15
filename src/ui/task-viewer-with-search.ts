@@ -1585,10 +1585,17 @@ export async function viewTaskEnhanced(
 
 	screen.key(["o", "O"], () => {
 		if (modalOpen || filterPopupOpen || currentFocus === "filters") return;
+		const wasOnList = currentFocus === "list";
+		const selectedTaskId = currentSelectedTask.id;
 		listSortField = nextTaskListSortField(listSortField);
-		// applyFilters() re-selects by task id, so the highlighted task stays highlighted
-		// while the rows move around it.
 		applyFilters();
+		// applyFilters() destroys and recreates the list widget, which drops keyboard focus
+		// onto the filter header - the status filter then looks selected and the arrow keys
+		// move between filters instead of tasks. Re-focus the rebuilt list on the same task,
+		// which has moved to a different row under the new order.
+		if (wasOnList) {
+			focusTaskList(resolveRestoredSelectionIndex(filteredTasks, selectedTaskId));
+		}
 		updateHelpBar();
 	});
 
