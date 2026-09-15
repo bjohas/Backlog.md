@@ -1,5 +1,5 @@
 ---
-id: BACK-686
+id: BACK-726
 title: Watch task lists with the existing JSON output
 status: Done
 assignee:
