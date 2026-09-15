@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { Task } from "../types/index.ts";
+import { getHelpShortcuts } from "../ui/components/help-popup.ts";
 import { getTaskListFooterContent } from "../ui/footer-content.ts";
 import { nextTaskListSortField, TASK_LIST_SORT_FIELDS, type TaskListSortField } from "../ui/task-viewer-with-search.ts";
 import { sortTasks } from "../utils/task-sorting.ts";
@@ -58,5 +59,12 @@ describe("task list ordering", () => {
 		expect(getTaskListFooterContent({ sort: "ordinal" })).toContain("Sort:ordinal");
 		expect(getTaskListFooterContent({ sort: "priority" })).toContain("Sort:priority");
 		expect(getTaskListFooterContent()).toContain("{cyan-fg}[O]{/} Sort");
+	});
+
+	it("advertises the binding in the list view help popup", () => {
+		const keys = getHelpShortcuts("task-list").map((shortcut) => shortcut.key);
+		expect(keys).toContain("O");
+		// The board has no such binding: its order is the ordinal one by definition.
+		expect(getHelpShortcuts("board").map((shortcut) => shortcut.key)).not.toContain("O");
 	});
 });
