@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-09-15 13:59'
-updated_date: '2026-09-15 14:00'
+updated_date: '2026-09-15 14:23'
 labels: []
 dependencies: []
 ordinal: 320000
@@ -19,19 +19,19 @@ The TUI list view renders the identity corpus without re-sorting it, so tasks ap
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The list view orders tasks by ordinal by default, matching the board
-- [ ] #2 A key binding cycles the order between ordinal, ID and priority, and the footer names the order currently in effect
-- [ ] #3 Ordering goes through the shared sortTasks helper rather than a comparator written for this view
+- [x] #1 The list view orders tasks by ordinal by default, matching the board
+- [x] #2 A key binding cycles the order between ordinal, ID and priority, and the footer names the order currently in effect
+- [x] #3 Ordering goes through the shared sortTasks helper rather than a comparator written for this view
 - [ ] #4 Switching order keeps the selected task selected rather than jumping to a different row
-- [ ] #5 The help popup lists the new binding
+- [x] #5 The help popup lists the new binding
 - [ ] #6 Tests cover each order and the selection being preserved across a change
 <!-- AC:END -->
 
 ## Definition of Done
 <!-- DOD:BEGIN -->
-- [ ] #1 bunx tsc --noEmit passes when TypeScript touched
-- [ ] #2 bun run check . passes when formatting/linting touched
-- [ ] #3 bun test (or scoped test) passes
+- [x] #1 bunx tsc --noEmit passes when TypeScript touched
+- [x] #2 bun run check . passes when formatting/linting touched
+- [x] #3 bun test (or scoped test) passes
 <!-- DOD:END -->
 
 ## Implementation Plan
@@ -43,3 +43,13 @@ The TUI list view renders the identity corpus without re-sorting it, so tasks ap
 4. help-popup.ts: list the binding.
 5. Tests: one per order, plus selection preserved across a change and the limit interacting with order.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented across footer-content.ts (sort segment), task-viewer-with-search.ts (TASK_LIST_SORT_FIELDS, nextTaskListSortField, ordering inside applyFilters before the limit, o/O binding) and help-popup.ts. Tests in src/test/tui-task-list-sort.test.ts, 5 passing.
+
+Verified: bunx tsc --noEmit and bun run check . clean; full suite 2936 pass / 8 skip / 20 fail, every failure in the known pre-existing set and unchanged by this work. The two help-popup failures fail identically with and without the added shortcut row, checked by reverting the row and re-running.
+
+AC #4 and #6 are not checked. Switching order preserves the selection because applyFilters() already re-selects by task id (it computes desiredIndex from currentSelectedTask.id and only moves when the task is gone), so the behaviour is inherited rather than added. That path is not covered by an automated test here: asserting it needs a driven screen, and the selection logic is inline in applyFilters rather than exported. The ordering itself, the cycle helper, the footer label and the help entry are all covered.
+<!-- SECTION:NOTES:END -->

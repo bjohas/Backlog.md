@@ -86,6 +86,22 @@ function getPriorityDisplay(priority?: string): string {
 export const TASK_LIST_SORT_FIELDS = ["ordinal", "id", "priority"] as const;
 export type TaskListSortField = (typeof TASK_LIST_SORT_FIELDS)[number];
 
+/**
+ * The row to select after the visible list is rebuilt. The list is destroyed and recreated on
+ * every filter, search and order change, so the selection has to be re-derived rather than
+ * carried: it follows the task by id, and only falls back to the top when that task is no
+ * longer listed or the caller is establishing an initial selection.
+ */
+export function resolveRestoredSelectionIndex(
+	tasks: readonly { id: string }[],
+	selectedTaskId: string,
+	forceFirst = false,
+): number {
+	if (forceFirst) return 0;
+	const index = tasks.findIndex((task) => task.id === selectedTaskId);
+	return index < 0 ? 0 : index;
+}
+
 export function nextTaskListSortField(current: TaskListSortField): TaskListSortField {
 	const index = TASK_LIST_SORT_FIELDS.indexOf(current);
 	return TASK_LIST_SORT_FIELDS[(index + 1) % TASK_LIST_SORT_FIELDS.length] as TaskListSortField;
@@ -934,10 +950,7 @@ export async function viewTaskEnhanced(
 		taskList = listController;
 		if (listController) {
 			const forceFirst = requireInitialFilterSelection;
-			let desiredIndex = filteredTasks.findIndex((t) => t.id === currentSelectedTask.id);
-			if (forceFirst || desiredIndex < 0) {
-				desiredIndex = 0;
-			}
+			const desiredIndex = resolveRestoredSelectionIndex(filteredTasks, currentSelectedTask.id, forceFirst);
 			const desiredTask = filteredTasks[desiredIndex];
 			if (desiredTask && desiredTask.id !== currentSelectedTask.id) {
 				currentSelectedTask = enrichTask(desiredTask) ?? desiredTask;

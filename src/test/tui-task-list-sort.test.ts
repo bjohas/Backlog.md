@@ -2,7 +2,12 @@ import { describe, expect, it } from "bun:test";
 import type { Task } from "../types/index.ts";
 import { getHelpShortcuts } from "../ui/components/help-popup.ts";
 import { getTaskListFooterContent } from "../ui/footer-content.ts";
-import { nextTaskListSortField, TASK_LIST_SORT_FIELDS, type TaskListSortField } from "../ui/task-viewer-with-search.ts";
+import {
+	nextTaskListSortField,
+	resolveRestoredSelectionIndex,
+	TASK_LIST_SORT_FIELDS,
+	type TaskListSortField,
+} from "../ui/task-viewer-with-search.ts";
 import { sortTasks } from "../utils/task-sorting.ts";
 
 const task = (id: string, overrides: Partial<Task> = {}): Task =>
@@ -66,5 +71,25 @@ describe("task list ordering", () => {
 		expect(keys).toContain("O");
 		// The board has no such binding: its order is the ordinal one by definition.
 		expect(getHelpShortcuts("board").map((shortcut) => shortcut.key)).not.toContain("O");
+	});
+
+	it("keeps the selected task selected when the order changes", () => {
+		const tasks = [
+			task("task-1", { ordinal: 3000 }),
+			task("task-2", { ordinal: 1000 }),
+			task("task-3", { ordinal: 2000 }),
+		];
+
+		// task-3 sits at a different row in each order, which is the whole point of the check.
+		expect(resolveRestoredSelectionIndex(sortTasks(tasks, "id"), "task-3")).toBe(2);
+		expect(resolveRestoredSelectionIndex(sortTasks(tasks, "ordinal"), "task-3")).toBe(1);
+	});
+
+	it("falls back to the first row only when the task is gone or a first selection is forced", () => {
+		const tasks = sortTasks([task("task-1", { ordinal: 2000 }), task("task-2", { ordinal: 1000 })], "ordinal");
+
+		expect(resolveRestoredSelectionIndex(tasks, "task-9")).toBe(0);
+		expect(resolveRestoredSelectionIndex(tasks, "task-1", true)).toBe(0);
+		expect(resolveRestoredSelectionIndex([], "task-1")).toBe(0);
 	});
 });
