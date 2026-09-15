@@ -42,6 +42,7 @@ const TASK_LIST_SHORTCUTS: Shortcut[] = [
 	{ key: "P", desc: "Filter by Priority" },
 	{ key: "I", desc: "Filter by Milestone" },
 	{ key: "L", desc: "Filter by Labels" },
+	{ key: "O", desc: "Change order (ordinal/ID/priority)" },
 	{ key: "↑↓", desc: "Navigate tasks" },
 	{ key: "←→", desc: "Switch between list and details" },
 	{ key: "Enter", desc: "Focus task details" },

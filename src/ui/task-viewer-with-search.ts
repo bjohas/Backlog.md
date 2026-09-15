@@ -36,6 +36,7 @@ import { getProjectValues, resolveProjectValues } from "../utils/project-config.
 import { formatReadinessBlockers } from "../utils/readiness.ts";
 import { canonicalTaskId, taskIdsEqual } from "../utils/task-id.ts";
 import { applyTaskFilters, createTaskSearchIndex } from "../utils/task-search.ts";
+import { sortTasks } from "../utils/task-sorting.ts";
 import { attachSubtaskSummaries } from "../utils/task-subtasks.ts";
 import { getTaskTypeValues, resolveTaskTypeValues } from "../utils/task-type-config.ts";
 import { formatDueDateForDisplay } from "../utils/utc-date-display.ts";
@@ -76,6 +77,18 @@ function getPriorityDisplay(priority?: string): string {
 		default:
 			return "";
 	}
+}
+
+/**
+ * Orders the task list offers. Ordinal comes first because it is the order the board
+ * maintains, so tabbing between the two views shows the same sequence by default.
+ */
+export const TASK_LIST_SORT_FIELDS = ["ordinal", "id", "priority"] as const;
+export type TaskListSortField = (typeof TASK_LIST_SORT_FIELDS)[number];
+
+export function nextTaskListSortField(current: TaskListSortField): TaskListSortField {
+	const index = TASK_LIST_SORT_FIELDS.indexOf(current);
+	return TASK_LIST_SORT_FIELDS[(index + 1) % TASK_LIST_SORT_FIELDS.length] as TaskListSortField;
 }
 
 export const DEFAULT_TASK_LIST_PANE_WIDTH = 40;
@@ -417,6 +430,7 @@ export async function viewTaskEnhanced(
 	let milestoneFilter = options.milestoneFilter || "";
 	let labelMatch: LabelMatchMode = options.labelMatch ?? "any";
 	const taskLimit = options.limit;
+	let listSortField: TaskListSortField = "ordinal";
 	let filteredTasks = [...allTasks];
 
 	if (options.labelFilter && options.labelFilter.length > 0) {
@@ -847,7 +861,14 @@ export async function viewTaskEnhanced(
 		const readyFilteredTasks = options.readyFilter
 			? withReadiness(nextFilteredTasks, resolveDependencyCorpus()).filter((task) => task.isReady)
 			: nextFilteredTasks;
-		filteredTasks = taskLimit !== undefined ? readyFilteredTasks.slice(0, taskLimit) : readyFilteredTasks;
+		// Ordered before the limit is applied, so --limit keeps the first N of the order the
+		// user asked for rather than the first N of the corpus order.
+		const orderedTasks = sortTasks(
+			readyFilteredTasks,
+			listSortField,
+			priorityOptions.map((priority) => priority.value),
+		);
+		filteredTasks = taskLimit !== undefined ? orderedTasks.slice(0, taskLimit) : orderedTasks;
 
 		// Update the task list label
 		if (taskListPane.setLabel) {
@@ -1259,7 +1280,7 @@ export async function viewTaskEnhanced(
 				" {cyan-fg}[Tab]{/} View | {cyan-fg}[←]{/} List | {cyan-fg}[↑↓]{/} Scroll | {cyan-fg}[E]{/} Edit | {cyan-fg}[Y]{/} Yank | {cyan-fg}[?]{/} Help | {cyan-fg}[q]{/} Quit";
 		} else {
 			// Task list help
-			content = getTaskListFooterContent({ hasProjects: configuredProjects.length > 0 });
+			content = getTaskListFooterContent({ hasProjects: configuredProjects.length > 0, sort: listSortField });
 		}
 
 		setHelpBarContent(content);
@@ -1438,6 +1459,15 @@ export async function viewTaskEnhanced(
 	screen.key(["s", "S"], () => {
 		if (modalOpen) return;
 		void openFilterPicker("status");
+	});
+
+	screen.key(["o", "O"], () => {
+		if (modalOpen || filterPopupOpen || currentFocus === "filters") return;
+		listSortField = nextTaskListSortField(listSortField);
+		// applyFilters() re-selects by task id, so the highlighted task stays highlighted
+		// while the rows move around it.
+		applyFilters();
+		updateHelpBar();
 	});
 
 	screen.key(["t", "T"], () => {
