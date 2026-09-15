@@ -1,11 +1,11 @@
 ---
 id: BACK-727
 title: 'Sort the TUI list view, defaulting to the board''s order'
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-15 13:59'
-updated_date: '2026-09-15 14:23'
+updated_date: '2026-09-15 14:26'
 labels: []
 dependencies: []
 ordinal: 320000
@@ -22,9 +22,9 @@ The TUI list view renders the identity corpus without re-sorting it, so tasks ap
 - [x] #1 The list view orders tasks by ordinal by default, matching the board
 - [x] #2 A key binding cycles the order between ordinal, ID and priority, and the footer names the order currently in effect
 - [x] #3 Ordering goes through the shared sortTasks helper rather than a comparator written for this view
-- [ ] #4 Switching order keeps the selected task selected rather than jumping to a different row
+- [x] #4 Switching order keeps the selected task selected rather than jumping to a different row
 - [x] #5 The help popup lists the new binding
-- [ ] #6 Tests cover each order and the selection being preserved across a change
+- [x] #6 Tests cover each order and the selection being preserved across a change
 <!-- AC:END -->
 
 ## Definition of Done
@@ -53,3 +53,13 @@ Verified: bunx tsc --noEmit and bun run check . clean; full suite 2936 pass / 8 
 
 AC #4 and #6 are not checked. Switching order preserves the selection because applyFilters() already re-selects by task id (it computes desiredIndex from currentSelectedTask.id and only moves when the task is gone), so the behaviour is inherited rather than added. That path is not covered by an automated test here: asserting it needs a driven screen, and the selection logic is inline in applyFilters rather than exported. The ordering itself, the cycle helper, the footer label and the help entry are all covered.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+The TUI list view now orders tasks, defaulting to the board's ordinal order.
+
+The list rendered the identity corpus as-is, so it showed task-id order while the board showed ordinal order - the order drag-and-drop maintains - and tabbing between the views reshuffled the same tasks with nothing to explain it. TASK_LIST_SORT_FIELDS (ordinal, id, priority) is cycled by o/O, ordering runs through the shared sortTasks() and is applied before the task limit so --limit keeps the first N of the chosen order, and the footer names the order in effect since it is otherwise invisible. resolveRestoredSelectionIndex was extracted from applyFilters so the selection rule the view already relied on is directly assertable, and the help popup lists the binding.
+
+Verified with 7 tests in src/test/tui-task-list-sort.test.ts covering each order, the cycle wrapping, the footer label, the help entry, selection following a task across an order change, and the fallbacks; bunx tsc --noEmit and bun run check . clean; the 41 tests across the seven suites touching these views pass; the full suite is 2936 pass / 8 skip / 20 fail with every failure in the known pre-existing set, confirmed unchanged by reverting the added help row and re-running.
+<!-- SECTION:FINAL_SUMMARY:END -->
