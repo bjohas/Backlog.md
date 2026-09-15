@@ -471,6 +471,9 @@ export async function runUnifiedView(options: UnifiedViewOptions): Promise<void>
 				viewTaskEnhanced(taskToView, {
 					tasks: availableTasks,
 					core: options.core,
+					// Same creation path the board uses, so a task made from either view is
+					// persisted and announced identically.
+					createTask: async (input) => createTaskFromBoard(options.core, input, taskUpdateCallbacks.onTaskAdded),
 					title: options.filter?.title,
 					filterDescription: options.filter?.filterDescription,
 					searchQuery: currentFilters.searchQuery,

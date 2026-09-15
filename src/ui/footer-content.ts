@@ -22,7 +22,7 @@ export function getTaskListFooterContent(options: { hasProjects?: boolean; sort?
 	// The list can be ordered several ways and the order is not otherwise visible, so the
 	// footer names the one in effect rather than only advertising the key that changes it.
 	const sort = options.sort ? ` {cyan-fg}[O]{/} Sort:${options.sort}` : " {cyan-fg}[O]{/} Sort";
-	return ` {cyan-fg}[Tab]{/} View | {cyan-fg}[/]{/} Search | {cyan-fg}[${keys}]{/} Filter |${sort} | {cyan-fg}[↑↓]{/} Nav | {cyan-fg}[E/C/A]{/} Edit/Comp/Arch | {cyan-fg}[Y]{/} Yank | {cyan-fg}[?]{/} Help | {cyan-fg}[q]{/} Quit`;
+	return ` {cyan-fg}[Tab]{/} View | {cyan-fg}[N]{/} New | {cyan-fg}[/]{/} Search | {cyan-fg}[${keys}]{/} Filter |${sort} | {cyan-fg}[↑↓]{/} Nav | {cyan-fg}[E/C/A]{/} Edit/Comp/Arch | {cyan-fg}[Y]{/} Yank | {cyan-fg}[?]{/} Help | {cyan-fg}[q]{/} Quit`;
 }
 
 function visibleLength(value: string): number {

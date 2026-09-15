@@ -21,7 +21,7 @@ import {
 	formatDateForDisplay,
 	formatTaskPlainText,
 } from "../formatters/task-plain-text.ts";
-import type { LabelMatchMode, Milestone, Task } from "../types/index.ts";
+import type { LabelMatchMode, Milestone, Task, TaskCreateInput } from "../types/index.ts";
 import { copyToClipboard } from "../utils/clipboard.ts";
 import { areLabelSelectionsEqual, collectAvailableLabels } from "../utils/label-filter.ts";
 import {
@@ -53,6 +53,7 @@ import {
 import { openMultiSelectFilterPopup, openSingleSelectFilterPopup } from "./components/filter-popup.ts";
 import { type BoundaryNavigationKey, createGenericList, type GenericList } from "./components/generic-list.ts";
 import { openHelpPopup } from "./components/help-popup.ts";
+import { openTaskComposer, type TaskComposerOptions } from "./components/task-composer.ts";
 import { formatFooterContent, getTaskListFooterContent } from "./footer-content.ts";
 import { formatHeading } from "./heading.ts";
 import { createLoadingScreen } from "./loading.ts";
@@ -100,6 +101,29 @@ export function resolveRestoredSelectionIndex(
 	if (forceFirst) return 0;
 	const index = tasks.findIndex((task) => task.id === selectedTaskId);
 	return index < 0 ? 0 : index;
+}
+
+/**
+ * What to say after a task is created from the list. A draft or a task the active filters hide
+ * never appears in the list, so saying nothing would look like the composer had failed.
+ */
+export function getCreatedTaskListOutcome(
+	task: Task,
+	visible: boolean,
+): { focusTaskId?: string; message: string; tone: "green" | "yellow" } {
+	if (task.status.trim().toLowerCase() === "draft") {
+		return {
+			message: `Created ${task.id} as a draft. Drafts are not shown in the task list.`,
+			tone: "yellow",
+		};
+	}
+	if (!visible) {
+		return {
+			message: `Created ${task.id}, but it is hidden by the current task list filters.`,
+			tone: "yellow",
+		};
+	}
+	return { focusTaskId: task.id, message: `Created ${task.id}.`, tone: "green" };
 }
 
 export function nextTaskListSortField(current: TaskListSortField): TaskListSortField {
@@ -313,6 +337,9 @@ export async function viewTaskEnhanced(
 		subscribeUpdates?: (
 			update: (nextTasks: Task[], nextStatuses: string[], nextLabels: string[], nextSelectedTask?: Task) => void,
 		) => void;
+		screen?: ScreenInterface;
+		createTask?: (input: TaskCreateInput) => Promise<Task>;
+		taskComposer?: (options: TaskComposerOptions) => Promise<Task | null>;
 		onTaskChange?: (task: Task) => void;
 		onTabPress?: () => Promise<void>;
 		onFilterChange?: (filters: {
@@ -446,6 +473,11 @@ export async function viewTaskEnhanced(
 	let milestoneFilter = options.milestoneFilter || "";
 	let labelMatch: LabelMatchMode = options.labelMatch ?? "any";
 	const taskLimit = options.limit;
+	// While the task composer is open, a watcher-driven update must not rebuild the list out
+	// from under it, nor race the composer's own persisted task into a duplicate. The data is
+	// still applied; only the render is deferred. Mirrors board.ts's guard of the same name.
+	let taskCreationOpen = false;
+	let taskCreationPendingUpdate = false;
 	let listSortField: TaskListSortField = "ordinal";
 	let filteredTasks = [...allTasks];
 
@@ -482,7 +514,7 @@ export async function viewTaskEnhanced(
 	let noResultsMessage: string | null = null;
 
 	const screenTitle = formatTuiTitle(options.title || "Tasks", projectName);
-	const screen = createScreen({ title: screenTitle });
+	const screen = options.screen ?? createScreen({ title: screenTitle });
 
 	// Main container
 	const container = box({
@@ -1474,6 +1506,83 @@ export async function viewTaskEnhanced(
 		void openFilterPicker("status");
 	});
 
+	screen.key(["n", "N", "S-n"], async () => {
+		if (modalOpen || filterPopupOpen || currentFocus === "filters") return;
+		taskCreationOpen = true;
+		let createdTask: Task | null = null;
+		let creationError: unknown;
+		let hadPendingUpdate = false;
+		try {
+			createdTask = await runWithModalGuard(() =>
+				(options.taskComposer ?? openTaskComposer)({
+					screen,
+					statuses,
+					types: configuredTaskTypes,
+					priorities: priorityOptions.map((priority) => priority.value),
+					projects: configuredProjects,
+					persist: async (input) => {
+						if (options.createTask) return options.createTask(input);
+						const config = await core.filesystem.loadConfig();
+						return (await core.createTaskFromInput(input, config?.autoCommit ?? false)).task;
+					},
+				}),
+			);
+		} catch (error) {
+			creationError = error;
+		} finally {
+			taskCreationOpen = false;
+			hadPendingUpdate = taskCreationPendingUpdate;
+			taskCreationPendingUpdate = false;
+		}
+
+		const flushDeferredUpdate = () => {
+			if (hadPendingUpdate) {
+				applyFilters();
+				focusTaskList();
+			} else {
+				screen.render();
+			}
+		};
+
+		if (creationError) {
+			const message = creationError instanceof Error ? creationError.message : "Unknown error";
+			showTransientHelp(` {red-fg}Error opening task composer: ${message}{/}`, 3000);
+			flushDeferredUpdate();
+			return;
+		}
+		if (!createdTask) {
+			flushDeferredUpdate();
+			return;
+		}
+
+		const created = createdTask;
+		const draft = created.status.trim().toLowerCase() === "draft";
+		if (!draft) {
+			// A deferred watcher update may already have delivered this exact task, so upsert
+			// by id rather than pushing, or it is listed twice.
+			const existingIndex = allTasks.findIndex((candidate) => candidate.id === created.id);
+			allTasks =
+				existingIndex === -1
+					? [...allTasks, created]
+					: allTasks.map((candidate, index) => (index === existingIndex ? created : candidate));
+			taskSearchIndex = createTaskSearchIndex(allTasks);
+		}
+		applyFilters();
+
+		const visible = !draft && filteredTasks.some((candidate) => candidate.id === created.id);
+		if (visible) {
+			// applyFilters() destroys and recreates the list widget, dropping focus onto its
+			// parent pane; focusTaskList() re-focuses it and selects the new task through the
+			// same path arrow-key navigation uses, so the detail pane follows.
+			const index = filteredTasks.findIndex((candidate) => candidate.id === created.id);
+			if (index >= 0) focusTaskList(index);
+		}
+
+		const outcome = getCreatedTaskListOutcome(created, visible);
+		showTransientHelp(` {${outcome.tone}-fg}${outcome.message}{/}`);
+		screen.render();
+	});
+
 	screen.key(["o", "O"], () => {
 		if (modalOpen || filterPopupOpen || currentFocus === "filters") return;
 		listSortField = nextTaskListSortField(listSortField);
@@ -1616,6 +1725,12 @@ export async function viewTaskEnhanced(
 		labels = nextLabels;
 		availableLabels = collectAvailableLabels(allTasks, labels);
 		taskSearchIndex = createTaskSearchIndex(allTasks);
+		// The data above is applied either way; only the rebuild is deferred, so the composer
+		// keeps the screen until it closes and the list is rebuilt once with everything in it.
+		if (taskCreationOpen) {
+			taskCreationPendingUpdate = true;
+			return;
+		}
 
 		const previousTaskId = currentSelectedTask.id;
 		const currentTask =
