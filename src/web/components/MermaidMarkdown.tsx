@@ -17,45 +17,23 @@ interface Props {
 	onToggleCheckbox?: (sourceOffset: number) => void;
 }
 
-const URI_AUTOLINK_PREFIX_REGEX = /^<[A-Za-z][A-Za-z0-9+.-]{1,31}:[^<>\u0000-\u0020]*>/;
-const EMAIL_AUTOLINK_PREFIX_REGEX = /^<[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+\.[A-Za-z0-9-]+>/;
-
-const ESCAPED_LT = "&lt;";
-const LT_BEFORE_LETTER = /<(?=[A-Za-z])/g;
-
 /**
- * Escape markup-looking `<` while keeping autolinks intact, and record where each
- * escape lands so positions in the parsed markdown map back to the original source.
+ * Remark plugin that switches HTML syntax off in the Markdown parser, so tag-like text such
+ * as `<repo>` is always plain text and the preview shows it as written, in prose and in code alike.
+ *
+ * This is also what keeps HTML in Markdown files inert. The preview library turns any HTML
+ * the parser reports into real elements, and its `skipHtml` option does not switch that step
+ * off, so `<script>`, `<img onerror=...>` and type strings such as `Result<List<MenuItem>>`
+ * must never be reported as HTML. Autolinks (`<https://example.com>`, `<user@example.com>`)
+ * are separate Markdown syntax and still link.
+ * Mermaid diagrams are drawn from code blocks afterwards; `renderMermaidIn` keeps HTML out of those.
  */
-function sanitizeMarkdownSource(source: string): { text: string; escapes: number[] } {
-	const escapes: number[] = [];
-	let text = "";
-	let cursor = 0;
-
-	LT_BEFORE_LETTER.lastIndex = 0;
-	let match = LT_BEFORE_LETTER.exec(source);
-	while (match) {
-		const remaining = source.slice(match.index);
-		if (!URI_AUTOLINK_PREFIX_REGEX.test(remaining) && !EMAIL_AUTOLINK_PREFIX_REGEX.test(remaining)) {
-			text += source.slice(cursor, match.index);
-			escapes.push(text.length);
-			text += ESCAPED_LT;
-			cursor = match.index + 1;
-		}
-		match = LT_BEFORE_LETTER.exec(source);
-	}
-
-	return { text: text + source.slice(cursor), escapes };
-}
-
-/** Undo the sanitizer's expansion: every escape before `offset` added 3 characters. */
-function toSourceOffset(offset: number, escapes: number[]): number {
-	let shift = 0;
-	for (const at of escapes) {
-		if (at >= offset) break;
-		shift += ESCAPED_LT.length - 1;
-	}
-	return offset - shift;
+function treatHtmlAsText(this: { data(): object }): void {
+	// The processor's shared settings, where the Markdown parser looks up its extensions.
+	const settings: { micromarkExtensions?: unknown[] } = this.data();
+	settings.micromarkExtensions ??= [];
+	// "htmlFlow" is block-level HTML and "htmlText" is inline HTML in micromark, the parser behind remark.
+	settings.micromarkExtensions.push({ disable: { null: ["htmlFlow", "htmlText"] } });
 }
 
 type CheckboxSpanInputProps = React.InputHTMLAttributes<HTMLInputElement> & { node?: unknown };
@@ -111,13 +89,12 @@ function createUrlTransform(documentBaseUrl?: string) {
 
 export default function MermaidMarkdown({ source, onToggleCheckbox }: Props) {
 	const ref = useRef<HTMLDivElement | null>(null);
-	const { text: safeSource, escapes } = useMemo(() => sanitizeMarkdownSource(source), [source]);
 	const taskIdIndex = useTaskIdIndex();
 	const documentBaseUrl = useDocumentBaseUrl();
 	const urlTransform = useMemo(() => createUrlTransform(documentBaseUrl), [documentBaseUrl]);
 	const interactiveCheckboxes = Boolean(onToggleCheckbox);
 	const remarkPlugins = useMemo(
-		() => [createTaskIdLinkPlugin(taskIdIndex), createCheckboxSpanPlugin(interactiveCheckboxes)],
+		() => [treatHtmlAsText, createTaskIdLinkPlugin(taskIdIndex), createCheckboxSpanPlugin(interactiveCheckboxes)],
 		[taskIdIndex, interactiveCheckboxes],
 	);
 
@@ -133,7 +110,7 @@ export default function MermaidMarkdown({ source, onToggleCheckbox }: Props) {
 		});
 
 		return () => cancelAnimationFrame(frameId);
-	}, [safeSource]);
+	}, [source]);
 
 	useEffect(() => {
 		const container = ref.current;
@@ -146,18 +123,18 @@ export default function MermaidMarkdown({ source, onToggleCheckbox }: Props) {
 			event.preventDefault();
 			const offset = Number(input.dataset.checkboxOffset);
 			if (Number.isInteger(offset)) {
-				onToggleCheckbox(toSourceOffset(offset, escapes));
+				onToggleCheckbox(offset);
 			}
 		};
 
 		container.addEventListener("click", handleClick);
 		return () => container.removeEventListener("click", handleClick);
-	}, [onToggleCheckbox, escapes]);
+	}, [onToggleCheckbox]);
 
 	return (
 		<div ref={ref} className="wmde-markdown">
 			<MDEditor.Markdown
-				source={safeSource}
+				source={source}
 				urlTransform={urlTransform}
 				remarkPlugins={remarkPlugins}
 				components={MARKDOWN_COMPONENTS}

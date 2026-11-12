@@ -22,6 +22,30 @@ describe("Acceptance Criteria CLI", () => {
 		await safeCleanup(TEST_DIR);
 	});
 
+	it("rejects multiline criteria on create, add and replace without writing task changes", async () => {
+		const multiline = "First\nSecond";
+		const created = await $`bun ${CLI_PATH} task create "Rejected" --ac ${multiline}`.cwd(TEST_DIR).quiet().nothrow();
+		expect(created.exitCode).not.toBe(0);
+		expect(created.stderr.toString()).toContain("single line");
+		const core = new Core(TEST_DIR);
+		expect(await core.filesystem.listTasks()).toHaveLength(0);
+		const { task } = await core.createTaskFromInput({
+			title: "Unchanged",
+			acceptanceCriteria: [{ text: "Keep", checked: true }],
+		});
+		if (!task.filePath) throw new Error("Expected task file path");
+		const before = await Bun.file(task.filePath).text();
+		for (const flag of ["--ac", "--acceptance-criteria"]) {
+			const edited = await $`bun ${CLI_PATH} task edit ${task.id} --title "Must not change" ${flag} ${multiline}`
+				.cwd(TEST_DIR)
+				.quiet()
+				.nothrow();
+			expect(edited.exitCode).not.toBe(0);
+			expect(edited.stderr.toString()).toContain("single line");
+			expect(await Bun.file(task.filePath).text()).toBe(before);
+		}
+	});
+
 	describe("task create with acceptance criteria", () => {
 		it("should create task with single acceptance criterion using -ac", async () => {
 			const result = await $`bun ${CLI_PATH} task create "Test Task" --ac "Must work correctly"`.cwd(TEST_DIR).quiet();
@@ -167,6 +191,36 @@ describe("Acceptance Criteria CLI", () => {
 			expect(body).not.toMatch(/\n{3,}/);
 		});
 
+		it("preserves checks by trimmed text when replacing and reordering criteria, consuming duplicates once", async () => {
+			await $`bun ${CLI_PATH} task edit 1 --ac "Repeat" --ac "Repeat" --ac "Stay" --ac "Old wording" --ac "Removed"`
+				.cwd(TEST_DIR)
+				.quiet();
+			await $`bun ${CLI_PATH} task edit 1 --check-ac 1 --check-ac 3 --check-ac 4 --check-ac 5`.cwd(TEST_DIR).quiet();
+
+			await $`bun ${CLI_PATH} task edit 1 --acceptance-criteria " Repeat " --acceptance-criteria "Repeat" --acceptance-criteria "Stay" --acceptance-criteria "Old wording" --acceptance-criteria "Removed"`
+				.cwd(TEST_DIR)
+				.quiet();
+			const core = new Core(TEST_DIR);
+			expect((await core.filesystem.loadTask("task-1"))?.acceptanceCriteriaItems).toEqual([
+				{ index: 1, text: "Repeat", checked: true },
+				{ index: 2, text: "Repeat", checked: false },
+				{ index: 3, text: "Stay", checked: true },
+				{ index: 4, text: "Old wording", checked: true },
+				{ index: 5, text: "Removed", checked: true },
+			]);
+
+			await $`bun ${CLI_PATH} task edit 1 --acceptance-criteria "Stay" --acceptance-criteria "Repeat" --acceptance-criteria "Repeat" --acceptance-criteria "Repeat" --acceptance-criteria "New wording"`
+				.cwd(TEST_DIR)
+				.quiet();
+			expect((await core.filesystem.loadTask("task-1"))?.acceptanceCriteriaItems).toEqual([
+				{ index: 1, text: "Stay", checked: true },
+				{ index: 2, text: "Repeat", checked: true },
+				{ index: 3, text: "Repeat", checked: false },
+				{ index: 4, text: "Repeat", checked: false },
+				{ index: 5, text: "New wording", checked: false },
+			]);
+		});
+
 		it("rejects replacement or clear combined with incremental acceptance criteria edits", async () => {
 			await $`bun ${CLI_PATH} task edit 1 --ac "Existing"`.cwd(TEST_DIR).quiet();
 			const core = new Core(TEST_DIR);
@@ -186,6 +240,23 @@ describe("Acceptance Criteria CLI", () => {
 			expect(clearAndCheck.exitCode).toBe(1);
 			expect(clearAndCheck.stderr.toString()).toContain("Cannot combine --clear-ac");
 			expect(await core.getTaskContent("task-1")).toBe(before);
+		});
+
+		it("consumes a duplicate match even when its replacement has an explicit checked value", async () => {
+			const core = new Core(TEST_DIR);
+			await core.updateTaskFromInput("task-1", {
+				acceptanceCriteria: [
+					{ text: "Repeat", checked: true },
+					{ text: "Repeat", checked: false },
+				],
+			});
+			const updated = await core.updateTaskFromInput("task-1", {
+				acceptanceCriteria: [{ text: "Repeat", checked: false }, { text: "Repeat" }],
+			});
+			expect(updated.acceptanceCriteriaItems).toEqual([
+				{ index: 1, text: "Repeat", checked: false },
+				{ index: 2, text: "Repeat", checked: false },
+			]);
 		});
 
 		it("rejects malformed Acceptance Criteria and Definition of Done markers without changing task bytes", async () => {
@@ -240,7 +311,7 @@ describe("Acceptance Criteria CLI", () => {
 					expect(stdout).not.toContain("Updated task");
 					expect(stderr).toContain(`Malformed ${target.title} markers:`);
 					expect(stderr).toContain(invalid.detail);
-					expect(stderr).toContain("The edit was not applied.");
+					expect(stderr).toContain("No changes were applied.");
 					expect(stderr).toContain("backlog task view TASK-1 --plain");
 					expect(stderr).toContain("repair or remove the malformed marker block");
 					expect(await Bun.file(task.filePath).text()).toBe(before);
@@ -265,11 +336,12 @@ describe("Acceptance Criteria CLI", () => {
 			expect(after).toContain("<!-- COMMENTS:BEGIN -->\n<!-- AC:END -->\n<!-- DOD:BEGIN -->\n<!-- COMMENTS:END -->");
 		});
 
-		it("documents replacement as repeatable without comma splitting", async () => {
+		it("documents single-line replacement as repeatable without comma splitting", async () => {
 			const result = await $`bun ${CLI_PATH} task edit --help`.cwd(TEST_DIR).quiet();
-			const output = result.stdout.toString();
+			const output = result.stdout.toString().replace(/\s+/g, " ");
 			expect(output).toContain("--acceptance-criteria <criteria>");
-			expect(output).toContain("replace all acceptance criteria (can be used");
+			expect(output).toContain("single-line values");
+			expect(output).toContain("can be used multiple times; commas are preserved");
 			expect(output).not.toContain("set acceptance criteria (comma-separated");
 			expect(output).toContain("--clear-ac");
 		});
@@ -596,35 +668,6 @@ Test task with acceptance criteria
 });
 
 describe("AcceptanceCriteriaManager unit tests", () => {
-	test("should parse criteria with stable markers", () => {
-		const content = `## Acceptance Criteria
-<!-- AC:BEGIN -->
-- [ ] #1 First criterion
-- [x] #2 Second criterion
-- [ ] #3 Third criterion
-<!-- AC:END -->`;
-
-		const criteria = AcceptanceCriteriaManager.parseAcceptanceCriteria(content);
-		expect(criteria).toHaveLength(3);
-		expect(criteria[0]).toEqual({ checked: false, text: "First criterion", index: 1 });
-		expect(criteria[1]).toEqual({ checked: true, text: "Second criterion", index: 2 });
-		expect(criteria[2]).toEqual({ checked: false, text: "Third criterion", index: 3 });
-	});
-
-	test("should format criteria with proper numbering", () => {
-		const criteria = [
-			{ checked: false, text: "First", index: 1 },
-			{ checked: true, text: "Second", index: 2 },
-		];
-
-		const formatted = AcceptanceCriteriaManager.formatAcceptanceCriteria(criteria);
-		expect(formatted).toContain("## Acceptance Criteria");
-		expect(formatted).toContain("<!-- AC:BEGIN -->");
-		expect(formatted).toContain("- [ ] #1 First");
-		expect(formatted).toContain("- [x] #2 Second");
-		expect(formatted).toContain("<!-- AC:END -->");
-	});
-
 	test("preserves markdown headings inside acceptance criteria when updating", () => {
 		const base = `## Acceptance Criteria
 <!-- AC:BEGIN -->

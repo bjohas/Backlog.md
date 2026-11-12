@@ -15,7 +15,7 @@ Recommended CLI commands:
 - `backlog task list --type {{TASK_TYPE:1}} --plain`
 - `backlog task list --search "desktop app" --labels frontend,bug --limit 20 --plain`
 
-Avoid broad unfiltered listing when the project may have many tasks. Use `--status`, `--exclude-status`, `--type`, `--project`, `--assignee`, `--unassigned`, `--parent`, `--priority`, `--labels`, `--search`, or `--limit` where applicable. Repeat `--exclude-status` or pass comma-separated configured statuses to exclude multiple states. Repeat `--type` or pass comma-separated configured task types to include multiple types. Repeat `--project` or pass comma-separated configured projects to include multiple projects.
+Avoid broad unfiltered listing when the project may have many tasks. Use `--status`, `--exclude-status`, `--type`, `--project`, `--assignee`, `--unassigned`, `--parent`, `--priority`, `--labels`, `--search`, or `--limit` where applicable. Check the size with `--count`, and read a long list in windows with `--max-count` and `--skip`; cut output ends with the command for the next window. Repeat `--exclude-status` or pass comma-separated configured statuses to exclude multiple states. Repeat `--type` or pass comma-separated configured task types to include multiple types. Repeat `--project` or pass comma-separated configured projects to include multiple projects.
 
 Use `backlog task view {{TASK_ID:123}} --plain` to read full context for likely matches.
 
@@ -107,6 +107,9 @@ If single quotes are not practical in your shell, escape each literal backtick b
 ### Acceptance Criteria
 
 Acceptance criteria define the expected behavior, not implementation steps.
+
+Each criterion must be a single line: actual line breaks are rejected. Repeat `--ac` for separate criteria,
+for example `--ac "First" --ac "Second"`. Long text can wrap in the browser without adding line breaks to the task.
 
 Good criteria:
 

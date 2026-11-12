@@ -49,7 +49,7 @@ Five independent layers, each buildable/testable on its own:
    below.
 3. **TUI** (`src/ui/task-viewer-with-search.ts`, `src/ui/board.ts`,
    `src/ui/unified-view.ts`) — pane width, `R` sync binding, move-failure
-   footer, carriage-return Enter binding. Same build as upstream.
+   footer. Same build as upstream.
 4. **Web UI** (`src/web/**`) — maximize mode, checkbox rendering,
    document-link rewriting, comment UX, settings fields, Sync button. Same
    `bun run build`; no separate bundle.
@@ -66,10 +66,10 @@ byte-identical to upstream's.
 ### 1. Core + CLI
 | Addition | Config key | Task |
 |---|---|---|
-| TUI list/detail pane width | `taskListPaneWidth` | BACK-686, BACK-661 (web Settings) · upstream PR [#965](https://github.com/MrLesk/Backlog.md/pull/965) (open) |
-| Doc-link rewrite base URL | `documentBaseUrl` | BACK-703, BACK-707 (web Settings) |
-| Relative due-date display | `relativeDueDates` | BACK-716 |
-| OSC 52 clipboard fallback (yank over SSH) | — | BACK-642 · upstream issue #947, PR [#961](https://github.com/MrLesk/Backlog.md/pull/961) (open) |
+| TUI list/detail pane width | `taskListPaneWidth` | BACK-35021, BACK-35012 (web Settings) · upstream PR [#965](https://github.com/MrLesk/Backlog.md/pull/965) (open) |
+| Doc-link rewrite base URL | `documentBaseUrl` | BACK-35029, BACK-35031 (web Settings) |
+| Relative due-date display | `relativeDueDates` | BACK-35036 |
+| OSC 52 clipboard fallback (yank over SSH) | — | BACK-35001 · upstream issue #947, PR [#961](https://github.com/MrLesk/Backlog.md/pull/961) (open) |
 
 ### 2. Guarded Git
 
@@ -94,29 +94,29 @@ Where it lives:
   60-second freshness window.
 - `src/ui/board.ts`, `src/ui/unified-view.ts` — the `R` binding and its
   colour-toned footer results.
-- Tasks: BACK-676 (degrade to a local commit rather than refuse the mutation),
-  BACK-677 (publish deferred task-only commits), BACK-722.
+- Tasks: BACK-35018 (degrade to a local commit rather than refuse the mutation),
+  BACK-35019 (publish deferred task-only commits), BACK-35039.
 
 Documented for users in `README.md` and `ADVANCED-CONFIG.md`.
 
 ### 3. TUI
 | Addition | Task |
 |---|---|
-| Board move failures surfaced in the footer | BACK-719 |
-| Carriage return bound alongside Enter (kitty and other CR terminals) | BACK-674 · upstream issue #1003, PR [#1002](https://github.com/MrLesk/Backlog.md/pull/1002) (open) |
+| Board move failures surfaced in the footer | BACK-35038 |
+| ~~Carriage return bound alongside Enter~~ — superseded in the 2026-11 merge by upstream BACK-791 ([#1152](https://github.com/MrLesk/Backlog.md/pull/1152)), which fixes #1003 | BACK-35017 · PR [#1002](https://github.com/MrLesk/Backlog.md/pull/1002) closed upstream on 2026-09-27 |
 
 ### 4. Web UI
 | Addition | Task |
 |---|---|
-| All Tasks maximize mode (persisted, real fullscreen, filters+search usable inside, survives focus loss) | BACK-645, 691, 647, 651, 653, 696, 658 |
-| Updated-date column, sort persisted to local storage and the URL, sortable Assignee | BACK-692, 650, 713, 670 |
-| Copy task ID button | BACK-649 |
-| Checkbox spans (`[]{.checkbox}` / `[x]{.checkbox}`) render as tickable boxes, fresh-fetch-before-write to avoid clobbering concurrent edits | BACK-698, 660, 665 |
-| Comment from preview mode (inline + header button) | BACK-656, 657 |
-| Modal capped by dynamic viewport height (mobile browser bar) | BACK-699 |
-| Documentation entries + in-task repo-relative links open against `documentBaseUrl` | BACK-703, 706 |
-| Default assignee / comment author from config, falling back to the server's git identity | BACK-710 |
-| Search field and clearer placeholder in the All Tasks panel | BACK-696, 668 |
+| All Tasks maximize mode (persisted, real fullscreen, filters+search usable inside, survives focus loss) | BACK-35002, 35024, 35003, 35006, 35007, 35026, 35010 |
+| Updated-date column, sort persisted to local storage and the URL, sortable Assignee | BACK-35025, 35005, 35034, 35016 |
+| Copy task ID button | BACK-35004 |
+| Checkbox spans (`[]{.checkbox}` / `[x]{.checkbox}`) render as tickable boxes, fresh-fetch-before-write to avoid clobbering concurrent edits | BACK-35027, 35011, 35014 |
+| Comment from preview mode (inline + header button) | BACK-35008, 35009 |
+| Modal capped by dynamic viewport height (mobile browser bar) | BACK-35028 |
+| Documentation entries + in-task repo-relative links open against `documentBaseUrl` | BACK-35029, 35030 |
+| Default assignee / comment author from config, falling back to the server's git identity | BACK-35032 |
+| Search field and clearer placeholder in the All Tasks panel | BACK-35026, 35015 |
 
 ### 5. Deployment (separate repo, not part of this build)
 `~/development/services/services/backlog.md-service` — systemd units serving
@@ -183,6 +183,30 @@ call it.
   feature) should eventually go upstream. `tmp/TODO.md` (untracked) tracks
   upstream PRs worth adopting the other direction.
 
+### Task IDs
+
+The fork and upstream share one `backlog/` folder and one `BACK-` counter, and the CLI
+gives a new task the highest ID in the tree plus one. Without a rule the two sides hand
+out the same numbers, and every sync brings duplicate IDs. Two rules keep them apart:
+
+- **Fork-only tasks live at BACK-35001 and up.** Create them on `main` or a branch of
+  it; the next ID then stays in that range by itself, and upstream never sees it.
+- **Tasks for upstream PRs are created on a branch made from `upstream/main`,** so they
+  carry upstream's next number. If such a branch is merged into the fork before
+  upstream accepts the PR, the fork holds the same file under the same number, which
+  does not collide.
+
+Upstream records keep exactly the path and ID they have in `upstream/main`.
+
+The 2026-11 repair (BACK-35043, `scripts/fork-renumber-tasks.ts`) moved every fork task
+into the range, keeping their order, and returned 18 upstream records that the 2026-09
+repair had renumbered. Branch names (`tasks/back-654-…`), commit messages and the
+titles of open upstream PRs (#961 BACK-703, #962 BACK-699, #963 BACK-704) still use the
+old numbers. Old → new:
+
+- Fork tasks: 642→35001, 645→35002, 647→35003, 649→35004, 650→35005, 651→35006, 653→35007, 656→35008, 657→35009, 658→35010, 660→35011, 661→35012, 664→35013, 665→35014, 668→35015, 670→35016, 674→35017, 676→35018, 677→35019, 685→35020, 686→35021, 688→35022, 689→35023, 691→35024, 692→35025, 696→35026, 698→35027, 699→35028, 703→35029, 706→35030, 707→35031, 710→35032, 711→35033, 713→35034, 715→35035, 716→35036, 717→35037, 719→35038, 722→35039, 723→35040, 724→35041, 725→35042, 801→35043
+- Upstream records returned to their IDs: 687→642, 690→645, 693→649, 694→650, 695→651, 697→653, 700→656, 701→657, 702→658, 704→660, 705→661, 708→664, 709→665, 712→668, 714→670, 718→674, 720→676, 721→677
+
 ### Sync history
 
 **2026-09-04** — merged `upstream/main` at `3c7fde65` (43 upstream PRs, fork
@@ -208,16 +232,49 @@ Upstream changes the fork had to be reconciled with:
   for a stored date. Rather than have four call sites branch on `relativeDueDates`,
   it gained a `relativeDue` prop.
 - **#981** replaced full web reloads with in-place updates, over the fork's
-  BACK-653 live-update work.
-- **#958/#959** consolidated task search in core, under the fork's BACK-711 fix.
+  BACK-35007 live-update work.
+- **#958/#959** consolidated task search in core, under the fork's BACK-35033 fix.
 
 **Task IDs collided head-on.** Both sides had independently used BACK-641…678,
 producing 37 duplicate groups. `backlog doctor --fix` repaired them, renumbering
 18 upstream-owned and 19 fork-owned records into BACK-686+. Note the consequence:
 BACK-6xx references in this fork's older commit messages may now name a different
 task, and the upstream records that were renumbered will collide again on the next
-merge. **Before the next sync, decide whether the fork should move to a reserved
-ID range so upstream records keep their own IDs permanently.**
+merge. The 2026-11 repair settled this with a reserved range (see "Task IDs").
+
+**2026-11-12** — merged `upstream/main` at `52b4ea3b` (v1.55.3, 129 upstream
+commits) via branch `merge/upstream-2026-11`, merge commit `f8817c83`. 11 files
+conflicted. Upstream now needs Bun 1.4.4 (`bun --check` is the type checker).
+
+Superseded fork fix: the board's `BOARD_ENTER_KEYS` (BACK-35017). Upstream's
+BACK-791 binds `enter` and `linefeed`; also binding `return` would fire twice per
+carriage return.
+
+Upstream changes the fork had to be reconciled with:
+
+- **Task lifecycle redesign.** The completed-folder flow and `completeTask` are
+  gone; any status can be archived, and archived tasks can be deleted or restored.
+  `archiveTask`, `deleteTask`, `restoreTask`, cleanup (`archiveTerminalStatusTasks`)
+  and `promoteDraft` took upstream's bodies and are wrapped in
+  `withTaskMutationTransaction`; the transaction's commit mode is passed through
+  upstream's own `shouldAutoCommit` calls, which keeps the fork's diff there small.
+- **HTML parsing switched off in the web preview.** Upstream no longer escapes
+  `<`, so checkbox-span offsets are source offsets and the escape-offset mapping
+  was dropped.
+- **`isReadOnly` replaces `isFromOtherBranch`** in the task modal; the fork's Copy
+  ID and comment-from-preview buttons are gated on it.
+
+Known test conflict: three tests in `web-task-details-modal-final-summary.test.tsx`
+assert that preview mode shows no "Add comment" button, which the fork adds on
+purpose (BACK-35008). They fail on `main` too.
+
+**Task IDs collided again**, as predicted above: 27 groups, BACK-686…725. The
+merge leaves them in place because `backlog doctor --fix` would renumber
+upstream-owned records too, allocate from BACK-801 (upstream PR #1195's number), and move
+all of `backlog/completed/` into `backlog/archive/tasks/` ahead of upstream. The
+repair, and the ID scheme that stops it recurring, is BACK-35043: fork tasks moved to
+BACK-35001+ and upstream records back to their own IDs (see "Task IDs" above), on the
+merge branch, before it was merged into `main`.
 
 ### Next sync
 
@@ -236,7 +293,7 @@ only source and test changes required for its PR, with no fork-specific metadata
 task files, or config changes.
 
 ### `pr/enter-key` (worktree: `enter-key/`)
-**Status:** ✅ Submitted — [PR #1002](https://github.com/MrLesk/Backlog.md/pull/1002)
+**Status:** ⛔ Superseded by upstream [#1152](https://github.com/MrLesk/Backlog.md/pull/1152) (BACK-791), which fixes #1003 — PR [#1002](https://github.com/MrLesk/Backlog.md/pull/1002) closed upstream on 2026-09-27
 **Issue:** [#1003](https://github.com/MrLesk/Backlog.md/issues/1003)
 **Changes:**
 - `src/ui/board.ts`: bind `"return"` alongside `"enter"` via a new exported `BOARD_ENTER_KEYS`
@@ -245,7 +302,7 @@ task files, or config changes.
 blessed names a carriage return `return` and only a linefeed `enter`, so the
 board's Enter handler never fired on terminals that send CR (kitty on Linux among
 them) — silently breaking both move confirmation and task popup opening. Based on
-`upstream/main` at 3c7fde65. Fork task BACK-674. Tests: 8 pass locally.
+`upstream/main` at 3c7fde65. Fork task BACK-35017. Tests: 8 pass locally.
 
 ### `pr/osc52-clipboard` (worktree: `osc52/`)
 **Status:** ✅ Submitted — [PR #961](https://github.com/MrLesk/Backlog.md/pull/961)

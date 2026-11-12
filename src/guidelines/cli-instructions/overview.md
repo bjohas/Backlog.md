@@ -1,23 +1,12 @@
 ## Backlog.md Overview (CLI)
 
-This project uses Backlog.md to track features, bugs, and structured work as tasks.
+Backlog.md tracks committed work: what will be built, fixed, or changed.
 
 ### When to Use Backlog
 
-Create a task when the work requires planning, decisions, or handoff notes.
+Create a task when work requires planning, decisions, or handoff notes. Search for an existing task first. Skip task creation for questions, exploration, and obvious mechanical edits.
 
-Ask: "Do I need to think about HOW to do this?"
-
-- Yes: search for an existing task first, then create one if needed.
-- No: do the small mechanical change directly.
-
-Create tasks for work like bug fixes that need investigation, feature work, API changes, refactors, or anything that should be reviewed as a commitment. Skip task creation for questions, explanations, quick lookups, and obvious mechanical edits.
-
-### Start Every Request Here
-
-Use this overview to decide what to read or run next.
-
-Search and read before changing anything:
+### Find and Read Work
 
 - `backlog search "query" --plain`
 - `backlog task list --status "<todo status>" --plain`
@@ -25,23 +14,34 @@ Search and read before changing anything:
 - `backlog task list --search "login" --labels frontend,bug --limit 20 --plain`
 - `backlog task view {{TASK_ID:123}} --plain`
 
-Use `--json` instead of `--plain` on `task list`, `task view`, `task <id>`, or `search` when a script needs stable versioned fields. Do not combine the two flags.
+For long lists, use `--max-count` and `--skip`, follow the printed `Next` command, or use `--count` for the total; command help covers the details.
 
-### Detailed Guides
+For scripts, `task list`, `task view`, `task <id>`, `draft list`, `decision list`, `decision view`, and `search` accept versioned `--json` output instead of `--plain`. `task list --json --watch` emits complete replacement responses; read successive JSON values, not individual lines. Filters and local scope are unchanged; intermediate edits may be coalesced. Restart for a fresh snapshot.
 
-**Required: read the matching guide below before creating, executing, or finalizing tasks. Do not rely on this overview alone for these actions.** The overview only tells you when to act; the guides define the required procedure, and skipping them produces inconsistent tasks and metadata.
+### Decision Records
 
-- `backlog instructions task-creation`
-  -> Read before creating tasks: how to search, scope, and create tasks
-- `backlog instructions task-execution`
-  -> Read before planning or updating task work: how to plan, update, and work through tasks
-- `backlog instructions task-finalization`
-  -> Read before finishing tasks: how to verify, summarize, and finish tasks
+Create a decision with `backlog decision create "Title" --context "Why" --decision "The choice"`, then read it with `backlog decision view decision-1 --plain` or `--json`. `decision list --plain` lists active decisions; `decision view` also reads archived decisions. Use `backlog decision edit decision-1 -t "New title" --context "New context"` to update it. Create and edit accept `--context`, `--decision`, `--consequences` and `--alternatives`; each replaces a section, an empty value clears it, and omitted flags keep existing content. Multi-line values need real newlines, for example `--context $'First line\nSecond line'` in bash/zsh. Literal `\n` stays literal.
 
-Use `backlog <command> --help` before unfamiliar operations. Command help includes input fields, read/write behavior, output shape, and examples.
+To record a replacement, use `backlog decision edit decision-1 --superseded-by decision-2`; this leaves status unchanged, or combine it with `-s superseded`. The replacement must identify one existing decision and cannot be the decision itself. Pass `--superseded-by ""` to clear the link. Changes set `updated_date`; omitted fields, unknown metadata and unmanaged text stay intact. Run `backlog decision edit --help` for details.
 
-### Core Principle
+### Required Guides
 
-Backlog tracks committed work: what will be built, fixed, or changed. Use the CLI for Backlog changes so metadata, file names, relationships, and history stay consistent.
+Read the matching guide before taking these actions; this overview does not replace it:
 
-Important: Do not edit Backlog task, draft, document, decision, or milestone markdown files directly. Use Backlog commands so automatic metadata stays complete.
+- `backlog instructions task-creation` — before creating or splitting tasks
+- `backlog instructions task-execution` — before planning, changing status or assignee, adding notes, or implementing
+- `backlog instructions task-finalization` — before checking acceptance criteria, writing final summaries, or marking work finished
+
+Use `backlog <command> --help` before unfamiliar operations. Help describes fields, output, and examples.
+
+### Task Lifecycle
+
+Mark finished work Done (or the configured final status) and leave it on the board until periodic cleanup.
+
+Archive (`backlog task archive {{TASK_ID:123}}`) moves a task in any status off the board: finished work during cleanup, and canceled, duplicate, or invalid work at any time. An archived task keeps its ID, its record, and every dependency and reference to it. It stays readable with `backlog task view` and is read-only. A dependency on an archived task counts as satisfied only when that task is in the final status.
+
+Restore (`backlog task restore {{TASK_ID:123}}`) moves an archived task back to the board with the same ID and the status it had. Restore a task before changing it: editing an archived task fails and names this command.
+
+Deleting a task takes two steps: archive it, then run `backlog task delete {{TASK_ID:123}}`. Delete permanently removes the archived task and releases its ID once no other branch or worktree still holds the task. It removes the dependencies and references other tasks and drafts hold to it and names the tasks and drafts it changed. A task whose subtasks still exist, as tasks or as drafts, is not deleted.
+
+Use the CLI for Backlog changes. Never edit task, draft, document, decision, or milestone markdown files directly; commands preserve metadata, relationships, and history.

@@ -1,0 +1,54 @@
+---
+id: BACK-35008
+title: Add a comment from the task modal without entering edit mode
+status: Done
+assignee:
+  - '@claude'
+created_date: '2026-08-28 21:01'
+updated_date: '2026-08-28 21:04'
+labels: []
+dependencies: []
+ordinal: 291000
+---
+
+## Description
+
+<!-- SECTION:DESCRIPTION:BEGIN -->
+The comment composer only renders in edit mode, so leaving a comment means opening the whole card for editing and saving it. Offer an Add comment control in preview mode that reveals the existing author/body composer and posts through the same commentsAppend path, leaving the modal in preview mode afterwards.
+<!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [x] #1 Preview mode offers an Add comment control that reveals the composer and posts the comment
+- [x] #2 The modal stays in preview mode after posting and the new comment appears in the list
+- [x] #3 Edit mode keeps its current composer behaviour, including staying in edit mode after posting
+- [x] #4 The control is hidden for cross-branch (read-only) tasks
+<!-- AC:END -->
+
+## Definition of Done
+<!-- DOD:BEGIN -->
+- [x] #1 bunx tsc --noEmit passes when TypeScript touched
+- [x] #2 bun run check . passes when formatting/linting touched
+- [x] #3 bun test (or scoped test) passes
+<!-- DOD:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Track composer visibility with state; in preview mode render an Add comment button that reveals the existing author/body composer.
+2. Only set preserveEditModeAfterCommentRefresh when actually in edit mode, so a preview-mode comment does not drop the reader into edit mode.
+3. Hide the composer again after a successful preview-mode post; keep edit mode behaviour as is; hide for cross-branch tasks.
+4. Headless: post from preview, assert the comment appears, the modal stays in preview, and the file gained the comment.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Headless: preview mode shows one Add comment button; clicking reveals the composer; posting keeps the modal in preview, shows the comment, closes the composer, and persists it to the task. Edit-mode regression checked separately: composer still shown directly, no extra reveal button, and the modal stays in edit mode after posting. No page errors.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Preview mode now offers an Add comment button that reveals the existing composer and posts via commentsAppend, staying in preview afterwards; the edit-mode preservation flag is only set while editing. Verified headless in both modes.
+<!-- SECTION:FINAL_SUMMARY:END -->

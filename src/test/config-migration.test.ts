@@ -187,32 +187,31 @@ auto_commit: false`;
 		{ sync: true, publish: false, enabled: true },
 		{ sync: false, publish: true, enabled: true },
 		{ sync: true, publish: true, enabled: true },
-	])("round-trips independent guarded task settings for sync=$sync and publish=$publish", async ({
-		sync,
-		publish,
-		enabled,
-	}) => {
-		await writeFile(
-			configPath,
-			`project_name: "Guarded Sync Project"
+	])(
+		"round-trips independent guarded task settings for sync=$sync and publish=$publish",
+		async ({ sync, publish, enabled }) => {
+			await writeFile(
+				configPath,
+				`project_name: "Guarded Sync Project"
 statuses: ["To Do"]
 labels: []
 date_format: "YYYY-MM-DD"
 guarded_task_sync: ${sync}
 guarded_task_publish: ${publish}
 `,
-		);
+			);
 
-		const fs = new FileSystem(testRoot);
-		const config = await fs.loadConfig();
-		expect(config?.guardedTaskSync).toBe(sync);
-		expect(config?.guardedTaskPublish).toBe(publish);
-		expect(isGuardedTaskSyncEnabled(config)).toBe(enabled);
+			const fs = new FileSystem(testRoot);
+			const config = await fs.loadConfig();
+			expect(config?.guardedTaskSync).toBe(sync);
+			expect(config?.guardedTaskPublish).toBe(publish);
+			expect(isGuardedTaskSyncEnabled(config)).toBe(enabled);
 
-		if (!config) throw new Error("Expected guarded sync config");
-		await fs.saveConfig(config);
-		const serialized = await Bun.file(configPath).text();
-		expect(serialized).toContain(`guarded_task_sync: ${sync}`);
-		expect(serialized).toContain(`guarded_task_publish: ${publish}`);
-	});
+			if (!config) throw new Error("Expected guarded sync config");
+			await fs.saveConfig(config);
+			const serialized = await Bun.file(configPath).text();
+			expect(serialized).toContain(`guarded_task_sync: ${sync}`);
+			expect(serialized).toContain(`guarded_task_publish: ${publish}`);
+		},
+	);
 });

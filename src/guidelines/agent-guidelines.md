@@ -216,6 +216,7 @@ Provide a concise summary of the task purpose and its goal. Explains the context
 ⚠️ **IMPORTANT: How AC Commands Work**
 
 - **Adding criteria (`--ac`)** accepts multiple flags: `--ac "First" --ac "Second"` ✅
+- Each criterion must be a single line. Actual line breaks are rejected; long text can still wrap in the browser.
 - **Checking/unchecking/removing** accept multiple flags too: `--check-ac 1 --check-ac 2` ✅
 - **Mixed operations** work in a single command: `--check-ac 1 --uncheck-ac 2 --remove-ac 3` ✅
 
@@ -586,8 +587,9 @@ transitive, and the heading counts both. Every plain task output uses this one l
 Every task appears once. `(cycle)` marks a relationship that points back into the branch above it and `(shown above)` marks a
 task already listed in the same section. `unknown task ID` means nothing visible claims that ID and `ambiguous task ID` means
 more than one record does; neither counts as satisfied, and the graph stops there rather than guessing what lies behind it. Run
-`backlog doctor` when one appears. The graph sees what task detail sees: the current checkout plus completed tasks, and the
-configured cross-branch corpus in the browser. Archived tasks are not resurrected.
+`backlog doctor` when one appears. The graph sees what task detail sees: the current checkout including archived tasks, and
+the configured cross-branch corpus in the browser. An archived task keeps its ID, so a dependency on it keeps resolving; it
+reads as completed only when it is in the final status.
 
 With `--json`, the same information is `task.dependencyGraph`, with `root`, `nodes`, and directed `edges`. It is derived at
 read time and never stored in the Markdown file. `task.dependencies` still holds only the task's own direct dependency IDs.
@@ -734,7 +736,7 @@ Use Backlog.md public interfaces for document creation and updates so IDs, front
 
 #### CLI Usage
 
-The CLI supports creating, updating, listing, and viewing documents.
+The CLI supports creating, updating, listing, viewing, archiving, restoring, and deleting documents.
 
 ```bash
 # Create a new doc (saved under backlog/docs/ by default)
@@ -757,12 +759,23 @@ backlog doc list
 
 # View a specific doc
 backlog doc view doc-1
+
+# Archive a doc that is no longer needed (its file moves to backlog/archive/docs/)
+backlog doc archive doc-1
+
+# Bring an archived doc back to backlog/docs/ with the same ID
+backlog doc restore doc-1
+
+# Remove an archived doc for good; works only after archive and asks no question
+backlog doc delete doc-1
 ```
 
 #### MCP / API Usage
 
 - Use `document_create` to create documents with title, content, optional type/tags, and optional docs-directory-relative path.
 - Use `document_update` to update document content, title, type, tags, or path while preserving document metadata.
+- Use `document_archive` to archive a document by ID. It follows the same rules as `backlog doc archive`.
+- Use `document_restore` and `document_delete` to restore or delete an archived document by ID. They follow the same rules as `backlog doc restore` and `backlog doc delete`.
 - Document responses include the persisted docs-relative file path so agents can reference the created file without scanning source internals.
 
 #### Key Rules
@@ -770,7 +783,52 @@ backlog doc view doc-1
 - Document paths are relative to `backlog/docs/`; absolute paths and `..` traversal are rejected.
 - Supported document types are `readme`, `guide`, `specification`, and `other`.
 - Document IDs are global across the entire docs tree, including nested subfolders.
+- Archiving moves a document's file unchanged to the same relative path under `backlog/archive/docs/`. The ID stays reserved, so no new document receives it. An archived document leaves lists and search, stays viewable (`backlog doc view`, `document_view`), and is read-only: an update fails until it is restored.
+- Restoring moves the archived file back, unchanged, to the same relative path under `backlog/docs/`. The document keeps its ID and can be updated again.
+- Removing a document takes two steps: archive, then delete. Delete works only on an archived document, asks no question, removes the file and releases the ID once no other file and no committed file on any branch uses the number.
+- Archiving or deleting a document changes no task. The command prints the tasks and drafts whose documentation list names the moved or removed file; update those entries yourself.
 - Prefer CLI, MCP, or Web document APIs over ad-hoc file writes so frontmatter and metadata remain valid.
+
+### Decision Management
+
+Decisions are records of choices, kept in `backlog/decisions/`. The CLI creates, lists, views and edits decisions, and archives, restores, and deletes them; MCP has no decision tools. The first edit adds section markers in place. Unknown metadata and text outside the four managed sections stay unchanged. Duplicate known section headings must be resolved before saving. Auto-commit refuses edits when a decision links to content outside the Git repository; disable auto-commit for that edit.
+
+```bash
+# Create a decision and list the decisions
+backlog decision create "Use PostgreSQL" -s accepted --context "Need transactions" --decision "Use PostgreSQL"
+backlog decision list --plain
+
+# Read an active or archived decision; JSON is also available
+backlog decision view decision-1 --plain
+backlog decision view decision-1 --json
+
+# Replace named sections or title; an empty section value clears it
+backlog decision edit decision-1 -t "Revised choice" --context $'First line\nSecond line' --alternatives ""
+
+# Change only a decision's status
+backlog decision edit decision-1 -s superseded
+
+# Set the replacement without changing status; combine with -s superseded when wanted
+backlog decision edit decision-1 --superseded-by decision-2
+
+# Clear the replacement link
+backlog decision edit decision-1 --superseded-by ""
+
+# Archive a decision that is no longer wanted (its file moves to backlog/archive/decisions/)
+backlog decision archive decision-1
+
+# Bring an archived decision back to backlog/decisions/ with the same ID
+backlog decision restore decision-1
+
+# Remove an archived decision for good; works only after archive and asks no question
+backlog decision delete decision-1
+```
+
+- Use `--context`, `--decision`, `--consequences` and `--alternatives` on create or edit. Each flag replaces one section; omitted flags preserve existing content. Multi-line values need real newlines, as in the bash/zsh example above. Literal `\n` is not decoded.
+- A replacement must identify one existing decision and cannot be the decision itself. Lists show the link. Changes set `updated_date`; unchanged saves keep it, and omitted links survive later edits.
+- Archiving keeps the ID reserved, so no new decision receives it. An archived decision leaves lists and search, remains readable with `decision view`, and is read-only until it is restored.
+- Removing a decision takes two steps: archive, then delete. Delete works only on an archived decision, asks no question, removes the file and releases the ID once no other file and no committed file on any branch uses the number.
+- Archiving or deleting a decision changes no task. The command prints the tasks and drafts whose documentation list names the moved or removed file; update those entries yourself.
 
 ### Task Operations
 
@@ -784,6 +842,8 @@ backlog doc view doc-1
 | Filter by status   | `backlog task list -s "In Progress" --plain` |
 | Filter by assignee | `backlog task list -a @sara --plain`         |
 | Archive task       | `backlog task archive 42`                    |
+| Restore archived task | `backlog task restore 42`                 |
+| Delete archived task | `backlog task delete 42`                   |
 | Demote to draft    | `backlog task demote 42`                     |
 
 ---

@@ -67,6 +67,13 @@ If new work appears during implementation that wasn't in the original acceptance
 - Update the plan before following a changed approach
 - If a deviation introduces a material product, architecture, or workflow decision, or the project explicitly requires review, explain it and wait for approval. Otherwise record the routine adjustment and continue within confirmed scope
 
+### Replacing Acceptance Criteria
+
+`acceptanceCriteriaAdd` adds criteria; `acceptanceCriteriaSet` replaces the full list. Each entry must be a single line;
+actual line breaks are rejected. Use separate entries for separate criteria. Matching trimmed text keeps its check state, even after reordering.
+Duplicate text matches old entries in order, once per entry. New or reworded entries start unchecked, and omitted
+entries are removed. `acceptanceCriteriaCheck` and `acceptanceCriteriaUncheck` refer to the resulting list.
+
 ### Working with Subtasks (Execution)
 
 - When user assigns you a parent task "and all subtasks", work through each subtask sequentially without asking for permission to move to the next one

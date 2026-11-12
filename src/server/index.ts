@@ -2,16 +2,18 @@ import net from "node:net";
 import { dirname, isAbsolute, join } from "node:path";
 import type { Server, ServerWebSocket } from "bun";
 import { DEFAULT_STATUSES } from "../constants/index.ts";
-import { Core } from "../core/backlog.ts";
+import { CONTENT_RECORD_WORDS, Core, formatCleanupResult, RecordRefusedError } from "../core/backlog.ts";
 import type { ContentStore } from "../core/content-store.ts";
 import { initializeProject } from "../core/init.ts";
 import type { SearchService } from "../core/search-service.ts";
 import { getTaskStatistics } from "../core/statistics.ts";
 import { loadTaskDetail } from "../core/task-detail.ts";
 import { isCreateLockError, isTaskLockError } from "../file-system/operations.ts";
+import { AmbiguousDecisionSectionError } from "../markdown/structured-sections.ts";
 import { BacklogToolError } from "../mcp/errors/mcp-errors.ts";
 import { MilestoneHandlers } from "../mcp/tools/milestones/handlers.ts";
 import {
+	type ContentRecordKind,
 	DOCUMENT_TYPE_VALUES,
 	type Document,
 	type SearchPriorityFilter,
@@ -34,7 +36,7 @@ import {
 } from "../utils/project-config.ts";
 import { formatValidStatuses, getCanonicalStatuses, getValidStatuses } from "../utils/status.ts";
 import { isValidTaskId } from "../utils/task-id.ts";
-import { isAmbiguousTaskIdError, LOCAL_TASK_LOOKUP_HINT } from "../utils/task-path.ts";
+import { isAmbiguousTaskIdError, LOCAL_TASK_LOOKUP_HINT, taskNotFoundMessage } from "../utils/task-path.ts";
 import { getVersion } from "../utils/version.ts";
 
 // Regex pattern to match any prefix (letters followed by dash)
@@ -430,10 +432,9 @@ export class BacklogServer {
 					"/api/tasks/:id": {
 						GET: async (req: Request & { params: { id: string } }) => await this.handleGetTask(req.params.id),
 						PUT: async (req: Request & { params: { id: string } }) => await this.handleUpdateTask(req, req.params.id),
-						DELETE: async (req: Request & { params: { id: string } }) => await this.handleDeleteTask(req.params.id),
 					},
-					"/api/tasks/:id/complete": {
-						POST: async (req: Request & { params: { id: string } }) => await this.handleCompleteTask(req.params.id),
+					"/api/tasks/:id/archive": {
+						POST: async (req: Request & { params: { id: string } }) => await this.handleArchiveTask(req.params.id),
 					},
 					"/api/tasks/:id/demote": {
 						POST: async (req: Request & { params: { id: string } }) => await this.handleDemoteTask(req.params.id),
@@ -459,6 +460,10 @@ export class BacklogServer {
 						GET: async (req: Request & { params: { id: string } }) => await this.handleGetDoc(req.params.id),
 						PUT: async (req: Request & { params: { id: string } }) => await this.handleUpdateDoc(req, req.params.id),
 					},
+					"/api/docs/:id/archive": {
+						POST: async (req: Request & { params: { id: string } }) =>
+							await this.handleArchiveContentRecord("document", req.params.id),
+					},
 					"/api/decisions": {
 						GET: async () => await this.handleListDecisions(),
 						POST: async (req: Request) => await this.handleCreateDecision(req),
@@ -470,6 +475,10 @@ export class BacklogServer {
 						GET: async (req: Request & { params: { id: string } }) => await this.handleGetDecision(req.params.id),
 						PUT: async (req: Request & { params: { id: string } }) =>
 							await this.handleUpdateDecision(req, req.params.id),
+					},
+					"/api/decisions/:id/archive": {
+						POST: async (req: Request & { params: { id: string } }) =>
+							await this.handleArchiveContentRecord("decision", req.params.id),
 					},
 					"/api/drafts": {
 						GET: async () => await this.handleListDrafts(),
@@ -1003,7 +1012,7 @@ export class BacklogServer {
 		const acceptanceCriteria = Array.isArray(payload.acceptanceCriteriaItems)
 			? payload.acceptanceCriteriaItems
 					.map((item: { text?: string; checked?: boolean }) => ({
-						text: String(item?.text ?? "").trim(),
+						text: String(item?.text ?? ""),
 						checked: Boolean(item?.checked),
 					}))
 					.filter((item: { text: string }) => item.text.length > 0)
@@ -1099,6 +1108,21 @@ export class BacklogServer {
 		if (!dueDate.ok) return Response.json({ error: dueDate.error }, { status: 400 });
 
 		const updateInput: TaskUpdateInput = {};
+		for (const [field, inputField] of [
+			["definitionOfDoneRemove", "removeDefinitionOfDone"],
+			["definitionOfDoneCheck", "checkDefinitionOfDone"],
+			["definitionOfDoneUncheck", "uncheckDefinitionOfDone"],
+		] as const) {
+			if (!(field in updates)) continue;
+			const indices = updates[field];
+			if (
+				!Array.isArray(indices) ||
+				indices.some((value: unknown) => typeof value !== "number" || !Number.isFinite(value))
+			) {
+				return Response.json({ error: `${field} must be an array of finite numbers.` }, { status: 400 });
+			}
+			updateInput[inputField] = indices;
+		}
 
 		if ("title" in updates && typeof updates.title === "string") {
 			updateInput.title = updates.title;
@@ -1184,7 +1208,7 @@ export class BacklogServer {
 		if ("acceptanceCriteriaItems" in updates && Array.isArray(updates.acceptanceCriteriaItems)) {
 			updateInput.acceptanceCriteria = updates.acceptanceCriteriaItems
 				.map((item: { text?: string; checked?: boolean }) => ({
-					text: String(item?.text ?? "").trim(),
+					text: String(item?.text ?? ""),
 					checked: Boolean(item?.checked),
 				}))
 				.filter((item: { text: string }) => item.text.length > 0);
@@ -1194,24 +1218,6 @@ export class BacklogServer {
 			updateInput.addDefinitionOfDone = updates.definitionOfDoneAdd
 				.map((item: unknown) => ({ text: String(item ?? "").trim(), checked: false }))
 				.filter((item: { text: string }) => item.text.length > 0);
-		}
-
-		if ("definitionOfDoneRemove" in updates && Array.isArray(updates.definitionOfDoneRemove)) {
-			updateInput.removeDefinitionOfDone = updates.definitionOfDoneRemove.filter(
-				(value: unknown) => typeof value === "number" && Number.isFinite(value),
-			);
-		}
-
-		if ("definitionOfDoneCheck" in updates && Array.isArray(updates.definitionOfDoneCheck)) {
-			updateInput.checkDefinitionOfDone = updates.definitionOfDoneCheck.filter(
-				(value: unknown) => typeof value === "number" && Number.isFinite(value),
-			);
-		}
-
-		if ("definitionOfDoneUncheck" in updates && Array.isArray(updates.definitionOfDoneUncheck)) {
-			updateInput.uncheckDefinitionOfDone = updates.definitionOfDoneUncheck.filter(
-				(value: unknown) => typeof value === "number" && Number.isFinite(value),
-			);
 		}
 
 		try {
@@ -1238,16 +1244,49 @@ export class BacklogServer {
 		}
 	}
 
-	private async handleDeleteTask(taskId: string): Promise<Response> {
+	/**
+	 * POST /api/docs/<id>/archive and POST /api/decisions/<id>/archive: the archive the CLI runs, for
+	 * the Archive button of the document and decision pages. Core decides everything; this maps its
+	 * answer to HTTP the way the task archive route does: 404 when no record claims the ID, 409 for an
+	 * ambiguous ID, 400 with core's message for a refusal, and 500 with `archiveState` when the record
+	 * moved and only the commit failed, so the page treats it as archived.
+	 */
+	private async handleArchiveContentRecord(kind: ContentRecordKind, id: string): Promise<Response> {
 		try {
-			const { success, cleanedTaskIds } = await this.core.archiveTask(taskId);
-			if (!success) {
-				return Response.json({ error: "Task not found" }, { status: 404 });
+			if (!(await this.core.archiveContentRecord(kind, id))) {
+				return Response.json({ error: CONTENT_RECORD_WORDS[kind].notFound(id) }, { status: 404 });
 			}
 			this.broadcastDataUpdated();
-			return Response.json({ success: true, cleanedTaskIds });
+			return Response.json({ success: true });
 		} catch (error) {
-			// The task reached the archive and something after that failed. Say so, and refresh:
+			if (isAmbiguousIdError(error) || isTaskLockError(error)) {
+				return Response.json({ error: error.message }, { status: 409 });
+			}
+			if (error instanceof RecordRefusedError) {
+				return Response.json({ error: error.message }, { status: 400 });
+			}
+			const archiveState = readMovedState(error, "archiveState");
+			if (archiveState) {
+				this.broadcastDataUpdated();
+				console.error(`Error archiving ${kind} after it moved:`, error);
+				return Response.json({ error: (error as Error).message, archiveState }, { status: 500 });
+			}
+			throw error;
+		}
+	}
+
+	private async handleArchiveTask(taskId: string): Promise<Response> {
+		try {
+			if (!(await this.core.archiveTask(taskId))) {
+				return Response.json({ error: taskNotFoundMessage(taskId) }, { status: 404 });
+			}
+			this.broadcastDataUpdated();
+			return Response.json({ success: true });
+		} catch (error) {
+			if (error instanceof RecordRefusedError) {
+				return Response.json({ error: error.message }, { status: 400 });
+			}
+			// The task reached the archive and the commit after that failed. Say so, and refresh:
 			// a client told only "error" would offer to archive a task that is already archived.
 			const archiveState = readMovedState(error, "archiveState");
 			if (archiveState) {
@@ -1263,30 +1302,11 @@ export class BacklogServer {
 		}
 	}
 
-	private async handleCompleteTask(taskId: string): Promise<Response> {
-		try {
-			const success = await this.core.completeTask(taskId);
-			if (!success) {
-				return Response.json({ error: "Task not found" }, { status: 404 });
-			}
-
-			// Notify listeners to refresh
-			this.broadcastDataUpdated();
-			return Response.json({ success: true });
-		} catch (error) {
-			const message = error instanceof Error ? error.message : "Failed to complete task";
-			if (!isAmbiguousTaskIdError(error)) {
-				console.error("Error completing task:", error);
-			}
-			return Response.json({ error: message }, { status: isAmbiguousTaskIdError(error) ? 409 : 500 });
-		}
-	}
-
 	private async handleDemoteTask(taskId: string): Promise<Response> {
 		try {
 			const { success, cleanedTaskIds } = await this.core.demoteTask(taskId);
 			if (!success) {
-				return Response.json({ error: "Task not found" }, { status: 404 });
+				return Response.json({ error: taskNotFoundMessage(taskId) }, { status: 404 });
 			}
 
 			this.broadcastDataUpdated();
@@ -1425,8 +1445,12 @@ export class BacklogServer {
 			if (error instanceof SyntaxError) {
 				return Response.json({ error: "Invalid request payload" }, { status: 400 });
 			}
-			if (isAmbiguousIdError(error)) {
+			if (isAmbiguousIdError(error) || isTaskLockError(error)) {
 				return Response.json({ error: error.message }, { status: 409 });
+			}
+			// Core refused the save, for example because the document is archived. Its message is the answer.
+			if (error instanceof RecordRefusedError) {
+				return Response.json({ error: error.message }, { status: 400 });
 			}
 			if (error instanceof Error) {
 				if (error.message.startsWith("Document not found")) {
@@ -1451,6 +1475,8 @@ export class BacklogServer {
 				title: decision.title,
 				status: decision.status,
 				date: decision.date,
+				updatedDate: decision.updatedDate,
+				supersededBy: decision.supersededBy,
 				context: decision.context,
 				decision: decision.decision,
 				consequences: decision.consequences,
@@ -1465,9 +1491,10 @@ export class BacklogServer {
 
 	private async handleGetDecision(decisionId: string): Promise<Response> {
 		try {
-			// Resolve from disk, not the content store: the store keys decisions by raw ID and would
-			// silently drop one of two files that share an ID before the ambiguity check could run.
-			const decision = await this.core.filesystem.loadDecision(decisionId);
+			// Resolve from disk through core, not the content store: the store keys decisions by raw ID
+			// and would silently drop one of two files that share an ID before the ambiguity check
+			// could run. Core searches the decisions folder and the archive together.
+			const decision = await this.core.getDecision(decisionId);
 
 			if (!decision) {
 				return Response.json({ error: "Decision not found" }, { status: 404 });
@@ -1487,7 +1514,7 @@ export class BacklogServer {
 		const { title } = await req.json();
 
 		try {
-			const decision = await this.core.createDecisionWithTitle(title);
+			const decision = await this.core.createDecisionFromInput({ title });
 			return Response.json(decision, { status: 201 });
 		} catch (error) {
 			console.error("Error creating decision:", error);
@@ -1496,14 +1523,19 @@ export class BacklogServer {
 	}
 
 	private async handleUpdateDecision(req: Request, decisionId: string): Promise<Response> {
-		const content = await req.text();
-
 		try {
-			await this.core.updateDecisionFromContent(decisionId, content);
+			const input = await req.json();
+			await this.core.updateDecisionFromInput(decisionId, input);
 			return Response.json({ success: true });
 		} catch (error) {
-			if (isAmbiguousIdError(error)) {
+			if (error instanceof SyntaxError)
+				return Response.json({ error: "Invalid JSON decision update" }, { status: 400 });
+			if (isAmbiguousIdError(error) || isTaskLockError(error) || error instanceof AmbiguousDecisionSectionError) {
 				return Response.json({ error: error.message }, { status: 409 });
+			}
+			// Core refused the save, for example because the decision is archived. Its message is the answer.
+			if (error instanceof RecordRefusedError) {
+				return Response.json({ error: error.message }, { status: 400 });
 			}
 			if (error instanceof Error && error.message.includes("not found")) {
 				return Response.json({ error: "Decision not found" }, { status: 404 });
@@ -1957,54 +1989,32 @@ export class BacklogServer {
 
 	private async handleCleanupExecute(req: Request): Promise<Response> {
 		try {
-			const { age } = await req.json();
-
-			if (age === undefined || age === null) {
-				return Response.json({ error: "Missing age parameter" }, { status: 400 });
+			// The browser posts the IDs its preview showed, as `backlog cleanup` passes the IDs it listed,
+			// so a task that became eligible after the preview is not archived.
+			const body = (await req.json().catch(() => null)) as { taskIds?: unknown } | null;
+			const taskIds = body?.taskIds;
+			if (
+				!Array.isArray(taskIds) ||
+				taskIds.length === 0 ||
+				!taskIds.every((id): id is string => typeof id === "string" && id.trim() !== "")
+			) {
+				return Response.json({ error: "taskIds must be a non-empty list of task IDs" }, { status: 400 });
 			}
+			const totalCount = taskIds.length;
 
-			const ageInDays = Number.parseInt(age, 10);
-			if (Number.isNaN(ageInDays) || ageInDays < 0) {
-				return Response.json({ error: "Invalid age parameter" }, { status: 400 });
-			}
-
-			const tasksToCleanup = await this.core.getTerminalStatusTasksByAge(ageInDays);
-
-			if (tasksToCleanup.length === 0) {
-				return Response.json({
-					success: true,
-					movedCount: 0,
-					message: "No tasks to clean up",
-				});
-			}
-
-			// Move tasks to completed folder
-			let successCount = 0;
-			const failedTasks: string[] = [];
-
-			for (const task of tasksToCleanup) {
-				try {
-					const success = await this.core.completeTask(task.id);
-					if (success) {
-						successCount++;
-					} else {
-						failedTasks.push(task.id);
-					}
-				} catch (error) {
-					console.error(`Failed to complete task ${task.id}:`, error);
-					failedTasks.push(task.id);
-				}
-			}
+			const result = await this.core.archiveTerminalStatusTasks(taskIds);
+			const lines = formatCleanupResult(result, totalCount);
+			for (const line of lines.failed) console.error(line);
 
 			// Notify listeners to refresh
 			this.broadcastDataUpdated();
 
 			return Response.json({
 				success: true,
-				movedCount: successCount,
-				totalCount: tasksToCleanup.length,
-				failedTasks: failedTasks.length > 0 ? failedTasks : undefined,
-				message: `Moved ${successCount} of ${tasksToCleanup.length} tasks to completed folder`,
+				movedCount: result.archivedTaskIds.length,
+				totalCount,
+				failedTasks: result.failures.length > 0 ? result.failures.map((failure) => failure.taskId) : undefined,
+				message: [...lines.skipped, ...lines.failed, lines.summary].join("\n"),
 			});
 		} catch (error) {
 			console.error("Error executing cleanup:", error);
@@ -2021,9 +2031,9 @@ export class BacklogServer {
 			if (servicesWereReady) await this.core.refreshTasksForTaskRead();
 			const corpus = store.getTaskCorpusSnapshot();
 			const corpusConfig = corpus.config ?? currentConfig;
-			const tasks = corpus.identityIndex?.getTasks(true) ?? [...corpus.activeTasks, ...corpus.completedTasks];
 			const drafts = await this.core.filesystem.listDrafts();
 			const statuses = (corpusConfig?.statuses || DEFAULT_STATUSES) as string[];
+			const tasks = corpus.identityIndex?.getTasks(true) ?? corpus.activeTasks;
 			const priorities = currentConfig?.priorities ?? corpusConfig?.priorities ?? [];
 
 			// Calculate statistics using the exact same function as CLI
