@@ -10,6 +10,7 @@ const PLATFORM_CONTRACT_FILES = [
 	"src/test/filesystem.test.ts",
 	"src/test/find-backlog-root.test.ts",
 	"src/test/git.test.ts",
+	"src/test/git-certificate-trust.test.ts",
 	"src/test/id-generation.test.ts",
 	"src/test/markdown.test.ts",
 	"src/test/task-id-resolution.test.ts",
@@ -35,6 +36,9 @@ const PLATFORM_CONTRACT_FILES = [
 	"src/test/terminal-status.test.ts",
 
 	// Network and stdio lifecycle boundaries.
+	"src/test/cli-json-watch.test.ts",
+	"src/test/cli-pipe-output.test.ts",
+	"src/test/watch-json.test.ts",
 	"src/test/mcp-server.test.ts",
 	"src/test/mcp-stdio-exit.test.ts",
 	"src/test/server-browser-open.test.ts",

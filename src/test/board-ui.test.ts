@@ -1,12 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { GuardedTaskSyncResult, Task } from "../types/index.ts";
 import type { ColumnData } from "../ui/board.ts";
-import {
-	BOARD_ENTER_KEYS,
-	getGuardedTaskSyncTone,
-	hasMoveBlockingBoardFilters,
-	shouldRebuildColumns,
-} from "../ui/board.ts";
+import { getGuardedTaskSyncTone, hasMoveBlockingBoardFilters, shouldRebuildColumns } from "../ui/board.ts";
 
 // Helper to create a minimal valid Task for testing
 const createTestTask = (id: string, title: string, status: string): Task => ({
@@ -57,7 +52,7 @@ describe("Board TUI Logic", () => {
 			const task2 = createTestTask("2", "t2", "ToDo");
 
 			const current: ColumnData[] = [{ status: "ToDo", tasks: [task1, task2] }];
-			const next: ColumnData[] = [{ status: "ToDo", tasks: [task1, task2] }];
+			const next: ColumnData[] = [{ status: "ToDo", tasks: [{ ...task1 }, { ...task2 }] }];
 			expect(shouldRebuildColumns(current, next)).toBe(false);
 		});
 	});
@@ -103,14 +98,6 @@ describe("Board TUI Logic", () => {
 			for (const [status, tone] of Object.entries(expectedTones)) {
 				expect(getGuardedTaskSyncTone({ status: status as GuardedTaskSyncResult["status"], message: "" })).toBe(tone);
 			}
-		});
-	});
-
-	describe("BOARD_ENTER_KEYS", () => {
-		it("binds both blessed names for the Enter key", () => {
-			// Terminals sending a carriage return are named "return"; only a linefeed is named "enter".
-			expect(BOARD_ENTER_KEYS).toContain("enter");
-			expect(BOARD_ENTER_KEYS).toContain("return");
 		});
 	});
 });

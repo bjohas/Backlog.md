@@ -7,7 +7,7 @@ import { FileSystem } from "../file-system/operations.ts";
 import { serializeTask } from "../markdown/serializer.ts";
 import { BacklogServer } from "../server/index.ts";
 import type { BacklogConfig, Task } from "../types/index.ts";
-import { createUniqueTestDir, retry, safeCleanup } from "./test-utils.ts";
+import { archiveTaskFile, createUniqueTestDir, retry, safeCleanup } from "./test-utils.ts";
 
 let TEST_DIR: string;
 let filesystem: FileSystem;
@@ -306,7 +306,7 @@ describe("BacklogServer task SPA fallback", () => {
 		const directCalls: string[] = [];
 		const originals = {
 			listTasks: taskFilesystem.listTasks.bind(taskFilesystem),
-			listCompletedTasks: taskFilesystem.listCompletedTasks.bind(taskFilesystem),
+			listArchivedTasks: taskFilesystem.listArchivedTasks.bind(taskFilesystem),
 			loadTask: taskFilesystem.loadTask.bind(taskFilesystem),
 			saveTask: taskFilesystem.saveTask.bind(taskFilesystem),
 		};
@@ -320,9 +320,9 @@ describe("BacklogServer task SPA fallback", () => {
 			recordDirectServerCall("listTasks");
 			return await originals.listTasks(...args);
 		};
-		taskFilesystem.listCompletedTasks = async (...args) => {
-			recordDirectServerCall("listCompletedTasks");
-			return await originals.listCompletedTasks(...args);
+		taskFilesystem.listArchivedTasks = async (...args) => {
+			recordDirectServerCall("listArchivedTasks");
+			return await originals.listArchivedTasks(...args);
 		};
 		taskFilesystem.loadTask = async (...args) => {
 			recordDirectServerCall("loadTask");
@@ -359,10 +359,10 @@ describe("BacklogServer task SPA fallback", () => {
 					})
 				).status,
 			).toBe(200);
-			expect((await request(`/api/tasks/${routedTask.id}/complete`, { method: "POST" })).status).toBe(200);
+			expect((await request(`/api/tasks/${routedTask.id}/archive`, { method: "POST" })).status).toBe(200);
 		} finally {
 			taskFilesystem.listTasks = originals.listTasks;
-			taskFilesystem.listCompletedTasks = originals.listCompletedTasks;
+			taskFilesystem.listArchivedTasks = originals.listArchivedTasks;
 			taskFilesystem.loadTask = originals.loadTask;
 			taskFilesystem.saveTask = originals.saveTask;
 		}
@@ -370,15 +370,15 @@ describe("BacklogServer task SPA fallback", () => {
 		expect(directCalls).toEqual([]);
 	});
 
-	it("serves completed-only task details through Core", async () => {
-		expect(await filesystem.completeTask(routedTask.id)).toBe(true);
+	it("serves archived task details through Core", async () => {
+		expect(await archiveTaskFile(filesystem, routedTask.id)).toBe(true);
 
 		const response = await request(`/api/task/${routedTask.id}`);
 
 		expect(response.status).toBe(200);
 		const task = (await response.json()) as Task;
 		expect(task.id).toBe(routedTask.id);
-		expect(task.source).toBe("completed");
+		expect(task.source).toBe("archived");
 	});
 
 	it("returns conflict after a frontmatter ID collision appears under an unchanged filename", async () => {
@@ -398,7 +398,8 @@ describe("BacklogServer task SPA fallback", () => {
 			server as unknown as { getContentStoreInstance: () => Promise<ContentStore> }
 		).getContentStoreInstance();
 		const originalGetTasks = contentStore.getTasks.bind(contentStore);
-		const liveTask = { ...routedTask, title: "Live current-worktree title" };
+		const storedTask = await filesystem.loadTask(routedTask.id);
+		const liveTask = { ...routedTask, filePath: storedTask?.filePath, title: "Live current-worktree title" };
 		await filesystem.saveTask(liveTask);
 		contentStore.getTasks = () => [{ ...routedTask, title: "Stale cached title" }];
 
@@ -737,12 +738,18 @@ describe("BacklogServer task SPA fallback", () => {
 		});
 	});
 
-	it("returns the local task when active origin/main has a padded version at the same path", async () => {
+	it("returns the progressed origin/main copy when it has a padded version at the same path", async () => {
 		await restartWithActiveRemoteCollision(true);
 
+		// most_progressed: origin/main's copy reached Done, so the detail view shows that copy, as the
+		// board does. Its branch source keeps the displayed version read-only in the browser.
 		const response = await request("/api/task/BACK-1");
 		expect(response.status).toBe(200);
-		expect(((await response.json()) as Task).title).toBe("Main collision task");
+		const task = (await response.json()) as Task;
+		expect(task.title).toBe("Remote same-path version");
+		expect(task.status).toBe("Done");
+		expect(task.source).toBe("remote");
+		expect(task.branch).toBe("main");
 	});
 
 	it("returns the local legacy task when an active branch changes the same task path", async () => {
@@ -1065,15 +1072,15 @@ describe("BacklogServer task SPA fallback", () => {
 			server as unknown as {
 				core: {
 					git: {
-						listFilesInTree: (ref: string, path: string) => Promise<string[]>;
+						listTreeBlobs: (ref: string, path: string) => Promise<Map<string, string>>;
 					};
 				};
 			}
 		).core.git;
-		const originalListFilesInTree = coreGit.listFilesInTree.bind(coreGit);
+		const originalListTreeBlobs = coreGit.listTreeBlobs.bind(coreGit);
 		let movedDuringScan = false;
-		coreGit.listFilesInTree = async (ref, path) => {
-			const files = await originalListFilesInTree(ref, path);
+		coreGit.listTreeBlobs = async (ref, path) => {
+			const files = await originalListTreeBlobs(ref, path);
 			if (!movedDuringScan && ref === collisionCommit) {
 				movedDuringScan = true;
 				await replaceCollisionBranchTask("BACK-100", "Moved during scan");
@@ -1091,7 +1098,7 @@ describe("BacklogServer task SPA fallback", () => {
 			expect(replacement.status).toBe(200);
 			expect(((await replacement.json()) as Task).title).toBe("Moved during scan");
 		} finally {
-			coreGit.listFilesInTree = originalListFilesInTree;
+			coreGit.listTreeBlobs = originalListTreeBlobs;
 		}
 	});
 });

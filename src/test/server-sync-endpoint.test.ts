@@ -60,7 +60,7 @@ async function setUpServer(): Promise<void> {
 		{ title: "Local document", content: "Local document body" },
 		false,
 	);
-	const decision = await localCore.createDecisionWithTitle("Local decision", false);
+	const decision = await localCore.createDecisionFromInput({ title: "Local decision" }, false);
 	const activeMilestone = await localCore.filesystem.createMilestone("Active local");
 	const archivedMilestone = await localCore.filesystem.createMilestone("Archived local");
 	const archiveResult = await localCore.archiveMilestone(archivedMilestone.id, false);

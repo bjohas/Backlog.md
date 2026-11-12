@@ -43,23 +43,13 @@ describe("TUI task type display", () => {
 
 	it("shows configured UTC due dates on board task cards", () => {
 		const task = createTask({ dueDate: "2026-08-10 14:30" });
-		expect(formatTaskListItem(task, false, Number.POSITIVE_INFINITY, "dd/mm/yyyy hh:mm")).toContain(
-			"due 10/08/2026 14:30 (UTC)",
-		);
+		expect(formatTaskListItem(task, false, "dd/mm/yyyy hh:mm")).toContain("due 10/08/2026 14:30 (UTC)");
 	});
 
 	it("shows relative due dates only when enabled", () => {
 		const task = createTask({ dueDate: "2026-08-10 14:30" });
 		expect(
-			formatTaskListItem(
-				task,
-				false,
-				Number.POSITIVE_INFINITY,
-				undefined,
-				undefined,
-				true,
-				new Date("2026-08-31T00:00:00Z"),
-			),
+			formatTaskListItem(task, false, undefined, undefined, undefined, true, new Date("2026-08-31T00:00:00Z")),
 		).toContain("due (-20d)");
 	});
 

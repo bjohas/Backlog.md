@@ -102,10 +102,66 @@ afterEach(async () => {
 });
 
 describe("Core shared task corpus regressions", () => {
+	it("shows an older progressed branch after a newer local edit on local and remote reads", async () => {
+		const filename = "task-1 - Shared.md";
+		const local = { ...task("TASK-1", "Shared"), updatedDate: recentCommitDate(3) };
+		const path = await writeTask(core.filesystem.tasksDir, filename, local);
+		await commit("Add shared task", recentCommitDate(3));
+		await $`git switch -c feature-progress`.cwd(testDir).quiet();
+		await writeTask(core.filesystem.tasksDir, filename, { ...local, status: "In Progress" });
+		await commit("Start task", recentCommitDate(2));
+		const featureCommit = (await $`git rev-parse HEAD`.cwd(testDir).quiet().text()).trim();
+		await $`git switch main`.cwd(testDir).quiet();
+		await writeTask(core.filesystem.tasksDir, filename, {
+			...local,
+			labels: ["new-label"],
+			updatedDate: recentCommitDate(1),
+		});
+		await commit("Label task later on main", recentCommitDate(1));
+
+		expect(await core.getTask("TASK-1")).toMatchObject({
+			status: "In Progress",
+			source: "local-branch",
+			branch: "feature-progress",
+		});
+		expect(await core.loadTaskById("TASK-1", { includeCrossBranch: false })).toMatchObject({
+			status: "To Do",
+			labels: ["new-label"],
+		});
+
+		// On a clone with only remote refs, the newer main copy must not hide feature's status.
+		await $`git update-ref refs/remotes/origin/feature-progress ${featureCommit}`.cwd(testDir).quiet();
+		await $`git update-ref refs/remotes/origin/main HEAD`.cwd(testDir).quiet();
+		await $`git branch -D feature-progress`.cwd(testDir).quiet();
+		await saveRemoteEnabledConfig("Remote status comparison");
+		const remoteCore = trackCore(new Core(testDir));
+		expect(await remoteCore.getTask("TASK-1")).toMatchObject({
+			status: "In Progress",
+			source: "remote",
+			branch: "feature-progress",
+		});
+		expect(await Bun.file(path).text()).toContain("status: To Do");
+	});
+
+	it("keeps initially identical branch content available after a local status edit", async () => {
+		await writeTask(core.filesystem.tasksDir, "task-1 - Shared.md", task("TASK-1", "Shared", "In Progress"));
+		await commit("Start shared task", recentCommitDate(2));
+		await $`git branch feature-progress`.cwd(testDir).quiet();
+		expect(await core.getTask("TASK-1")).toMatchObject({ status: "In Progress", source: "local" });
+		const local = await core.loadTaskById("TASK-1", { includeCrossBranch: false });
+		if (!local) throw new Error("Expected a local task");
+		await core.updateTask({ ...local, status: "To Do" }, false);
+
+		const expected = { status: "In Progress", source: "local-branch", branch: "feature-progress" };
+		expect(await core.getTask("TASK-1")).toMatchObject(expected);
+		expect(await trackCore(new Core(testDir)).getTask("TASK-1")).toMatchObject(expected);
+		expect(await core.loadTaskById("TASK-1", { includeCrossBranch: false })).toMatchObject({ status: "To Do" });
+	});
+
 	it("publishes changed completed branch content at the same path after its ref moves", async () => {
 		await $`git switch -c feature-completed`.cwd(testDir).quiet();
 		const completedPath = await writeTask(
-			core.filesystem.completedDir,
+			core.filesystem.archiveTasksDir,
 			"task-1 - Completed.md",
 			task("TASK-1", "Before ref move", "Done"),
 		);
@@ -137,7 +193,7 @@ describe("Core shared task corpus regressions", () => {
 		expect(
 			store
 				.getTaskCorpusSnapshot()
-				.branchStateEntries?.find((entry) => entry.id === "TASK-1" && entry.type === "completed")?.task?.title,
+				.branchStateEntries?.find((entry) => entry.id === "TASK-1" && entry.type === "archived")?.task?.title,
 		).toBe("After ref move");
 	});
 
@@ -149,7 +205,7 @@ describe("Core shared task corpus regressions", () => {
 		await commit("Add root task", recentCommitDate(2));
 		await $`git switch -c feature-completed-dependency`.cwd(testDir).quiet();
 		await writeTask(
-			core.filesystem.completedDir,
+			core.filesystem.archiveTasksDir,
 			"task-1 - Completed elsewhere.md",
 			task("TASK-1", "Completed elsewhere", "Done"),
 		);
@@ -157,7 +213,7 @@ describe("Core shared task corpus regressions", () => {
 		await $`git switch main`.cwd(testDir).quiet();
 
 		const corpus = await loadTaskCorpus(core, { includeCrossBranch: true });
-		expect(corpus.completedTasks.some((candidate) => candidate.id === "TASK-1")).toBe(true);
+		expect(corpus.archivedTasks.some((candidate) => candidate.id === "TASK-1")).toBe(true);
 
 		const root = corpus.tasks.find((candidate) => candidate.id === "TASK-2");
 		expect(root).toBeDefined();
@@ -172,11 +228,11 @@ describe("Core shared task corpus regressions", () => {
 			...task("TASK-2", "Root task"),
 			dependencies: ["TASK-1"],
 		});
-		await writeTask(core.filesystem.completedDir, "task-1 - Completed here.md", task("TASK-1", "Local", "Done"));
+		await writeTask(core.filesystem.archiveTasksDir, "task-1 - Completed here.md", task("TASK-1", "Local", "Done"));
 		await commit("Add root task and local completed dependency", recentCommitDate(2));
 		await $`git switch -c feature-colliding-completed`.cwd(testDir).quiet();
 		await writeTask(
-			core.filesystem.completedDir,
+			core.filesystem.archiveTasksDir,
 			"task-1 - Completed elsewhere.md",
 			task("TASK-1", "Branch claimant", "Done"),
 		);
@@ -219,7 +275,7 @@ describe("Core shared task corpus regressions", () => {
 	it("allocates through one shared branch snapshot without hydrating completed task blobs", async () => {
 		await $`git switch -c feature-completed-id`.cwd(testDir).quiet();
 		await writeTask(
-			core.filesystem.completedDir,
+			core.filesystem.archiveTasksDir,
 			"task-41 - Completed.md",
 			task("TASK-41", "Completed branch reservation", "Done"),
 		);
@@ -234,7 +290,7 @@ describe("Core shared task corpus regressions", () => {
 			listRecentBranches: git.listRecentBranches.bind(git),
 			listRecentRemoteBranches: git.listRecentRemoteBranches.bind(git),
 			resolveCommit: git.resolveCommit.bind(git),
-			listFilesInTree: git.listFilesInTree.bind(git),
+			listTreeBlobs: git.listTreeBlobs.bind(git),
 			getBranchLastModifiedMap: git.getBranchLastModifiedMap.bind(git),
 			showFile: git.showFile.bind(git),
 		};
@@ -268,9 +324,9 @@ describe("Core shared task corpus regressions", () => {
 			counts.resolveCommit += 1;
 			return await originals.resolveCommit(...args);
 		};
-		git.listFilesInTree = async (...args) => {
+		git.listTreeBlobs = async (...args) => {
 			counts.trees += 1;
-			return await originals.listFilesInTree(...args);
+			return await originals.listTreeBlobs(...args);
 		};
 		git.getBranchLastModifiedMap = async (...args) => {
 			counts.histories += 1;
@@ -290,7 +346,7 @@ describe("Core shared task corpus regressions", () => {
 			git.listRecentBranches = originals.listRecentBranches;
 			git.listRecentRemoteBranches = originals.listRecentRemoteBranches;
 			git.resolveCommit = originals.resolveCommit;
-			git.listFilesInTree = originals.listFilesInTree;
+			git.listTreeBlobs = originals.listTreeBlobs;
 			git.getBranchLastModifiedMap = originals.getBranchLastModifiedMap;
 			git.showFile = originals.showFile;
 		}

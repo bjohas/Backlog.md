@@ -1,11 +1,15 @@
 import type { AcceptanceCriterion, Decision, Document, Task } from "../types/index.ts";
 import { normalizeAssignee } from "../utils/assignee.ts";
-import { stringifyFrontmatter } from "./frontmatter.ts";
+import { stringifyFrontmatter, updateDecisionFrontmatter } from "./frontmatter.ts";
+import { parseDecision } from "./parser.ts";
 import {
 	AcceptanceCriteriaManager,
 	CommentsManager,
+	DECISION_SECTION_KEYS,
 	DefinitionOfDoneManager,
+	getDecisionSections,
 	getStructuredSections,
+	updateDecisionSections,
 	updateStructuredSections,
 } from "./structured-sections.ts";
 
@@ -46,39 +50,36 @@ function commentItemsEqual(left: Task["comments"], right: Task["comments"]): boo
 	});
 }
 
-export function serializeTask(task: Task): string {
+export function serializeTask(task: Task, originalContent = ""): string {
 	normalizeAssignee(task);
+	// Omitted optional fields are still owned: clearing one must not recover its original entry.
 	const frontmatter = {
 		id: task.id,
 		title: task.title,
 		status: task.status,
 		assignee: task.assignee,
-		...(task.reporter && { reporter: task.reporter }),
+		reporter: task.reporter || undefined,
 		created_date: task.createdDate,
-		...(task.updatedDate && { updated_date: task.updatedDate }),
-		...(task.dueDate && { due_date: task.dueDate }),
+		updated_date: task.updatedDate || undefined,
+		due_date: task.dueDate || undefined,
 		labels: task.labels,
-		...(task.milestone && { milestone: task.milestone }),
+		milestone: task.milestone || undefined,
 		dependencies: task.dependencies,
-		...(task.references && task.references.length > 0 && { references: task.references }),
-		...(task.documentation && task.documentation.length > 0 && { documentation: task.documentation }),
-		...(task.modifiedFiles && task.modifiedFiles.length > 0 && { modified_files: task.modifiedFiles }),
-		...(task.parentTaskId && { parent_task_id: task.parentTaskId }),
-		...(task.subtasks && task.subtasks.length > 0 && { subtasks: task.subtasks }),
-		...(task.priority && { priority: task.priority }),
-		...(task.type && { type: task.type }),
-		...(task.project && { project: task.project }),
-		...(task.ordinal !== undefined && { ordinal: task.ordinal }),
-		...(task.onStatusChange && { onStatusChange: task.onStatusChange }),
+		references: task.references?.length ? task.references : undefined,
+		documentation: task.documentation?.length ? task.documentation : undefined,
+		modified_files: task.modifiedFiles?.length ? task.modifiedFiles : undefined,
+		parent_task_id: task.parentTaskId || undefined,
+		subtasks: task.subtasks?.length ? task.subtasks : undefined,
+		priority: task.priority || undefined,
+		type: task.type || undefined,
+		project: task.project || undefined,
+		ordinal: task.ordinal,
+		onStatusChange: task.onStatusChange || undefined,
 	};
 
 	let contentBody = task.rawContent ?? "";
 	const rawContent = task.rawContent ?? "";
-	if (
-		typeof task.description === "string" &&
-		task.description.trim() !== "" &&
-		sectionChanged(rawContent, "description", task.description)
-	) {
+	if (typeof task.description === "string" && sectionChanged(rawContent, "description", task.description)) {
 		contentBody = updateTaskDescription(contentBody, task.description);
 	}
 	if (Array.isArray(task.acceptanceCriteriaItems)) {
@@ -122,41 +123,61 @@ export function serializeTask(task: Task): string {
 		contentBody = updateTaskFinalSummary(contentBody, task.finalSummary);
 	}
 
-	const serialized = stringifyFrontmatter(contentBody, frontmatter);
+	const serialized = stringifyFrontmatter(contentBody, frontmatter, originalContent);
 	// Ensure there's a blank line between frontmatter and content
 	return serialized.replace(/^(---\n(?:.*\n)*?---)\n(?!$)/, "$1\n\n");
 }
 
-export function serializeDecision(decision: Decision): string {
+export function serializeDecision(decision: Decision, originalContent = ""): string {
 	const frontmatter = {
 		id: decision.id,
 		title: decision.title,
 		date: decision.date,
 		status: decision.status,
+		updated_date: decision.updatedDate,
+		superseded_by: decision.supersededBy,
 	};
-
-	let content = `## Context\n\n${decision.context}\n\n`;
-	content += `## Decision\n\n${decision.decision}\n\n`;
-	content += `## Consequences\n\n${decision.consequences}`;
-
-	if (decision.alternatives) {
-		content += `\n\n## Alternatives\n\n${decision.alternatives}`;
+	// Keep the entire original header and body. parseMarkdown intentionally trims bodies for readers.
+	const header = originalContent.match(/^\uFEFF?---\r?\n[\s\S]*?\r?\n---[^\r\n]*(?:\r?\n|$)/)?.[0] ?? "";
+	const originalBody = originalContent ? originalContent.slice(header.length) : decision.rawContent;
+	const sections = getDecisionSections(originalBody);
+	const updates: Partial<Record<(typeof DECISION_SECTION_KEYS)[number], string>> = {};
+	for (const key of DECISION_SECTION_KEYS) {
+		if (decision[key] !== undefined && (!originalContent || decision[key] !== (sections[key] ?? "")))
+			updates[key] = decision[key];
 	}
+	const newline = (header || originalBody).includes("\r\n") ? "\r\n" : "\n";
+	const body = updateDecisionSections(originalBody, updates, newline);
+	if (!originalContent) return stringifyFrontmatter(body, frontmatter);
 
-	return stringifyFrontmatter(content, frontmatter);
+	const previous = parseDecision(originalContent.replace(/^\uFEFF/, ""));
+	const metadataUpdates: Record<string, unknown> = {};
+	const metadataFields = {
+		id: "id",
+		title: "title",
+		date: "date",
+		status: "status",
+		updated_date: "updatedDate",
+		superseded_by: "supersededBy",
+	} as const;
+	for (const [key, field] of Object.entries(metadataFields)) {
+		if (decision[field] !== previous[field]) metadataUpdates[key] = decision[field];
+	}
+	const updatedHeader = updateDecisionFrontmatter(header, metadataUpdates);
+	return updatedHeader + body;
 }
 
-export function serializeDocument(document: Document): string {
+export function serializeDocument(document: Document, originalContent = ""): string {
 	const frontmatter = {
 		id: document.id,
 		title: document.title,
 		type: document.type,
 		created_date: document.createdDate,
-		...(document.updatedDate && { updated_date: document.updatedDate }),
-		...(document.tags && document.tags.length > 0 && { tags: document.tags }),
+		updated_date: document.updatedDate || undefined,
+		tags: document.tags && document.tags.length > 0 ? document.tags : undefined,
 	};
 
-	return stringifyFrontmatter(document.rawContent, frontmatter);
+	return stringifyFrontmatter(document.rawContent, frontmatter, originalContent);
 }
 
 export function updateTaskAcceptanceCriteria(content: string, criteria: string[]): string {

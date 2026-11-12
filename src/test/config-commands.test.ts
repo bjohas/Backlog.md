@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdir } from "node:fs/promises";
+import { appendFile, mkdir } from "node:fs/promises";
+import { join } from "node:path";
 import { $ } from "bun";
-import type { PromptRunner } from "../commands/advanced-config-wizard.ts";
+import { type PromptRunner, runAdvancedConfigWizard } from "../commands/advanced-config-wizard.ts";
 import { configureAdvancedSettings } from "../commands/configure-advanced-settings.ts";
 import { DEFAULT_STATUSES } from "../constants/index.ts";
 import { Core } from "../core/backlog.ts";
@@ -169,6 +170,53 @@ describe("Config commands", () => {
 		expect(reloadedConfig?.definitionOfDone).toEqual(["Final item"]);
 	});
 
+	describe("advanced wizard editor prompt", () => {
+		let originalEditor: string | undefined;
+
+		// Answers every prompt with the value it starts from, as pressing Enter would, and leaves
+		// the Definition of Done editor without adding an item.
+		const acceptStartingValues: PromptRunner = async (question) => {
+			const questions = Array.isArray(question) ? question : [question];
+			return Object.fromEntries(
+				questions.map(({ name, initial }) => [name, name === "definitionOfDoneAction" ? "done" : initial]),
+			);
+		};
+
+		beforeEach(() => {
+			originalEditor = process.env.EDITOR;
+			process.env.EDITOR = "backlog-env-editor";
+		});
+
+		afterEach(() => {
+			if (originalEditor === undefined) {
+				delete process.env.EDITOR;
+			} else {
+				process.env.EDITOR = originalEditor;
+			}
+		});
+
+		it("leaves an existing project without an editor when every prompt is accepted", async () => {
+			const { mergedConfig } = await configureAdvancedSettings(core, {
+				promptImpl: acceptStartingValues,
+				isEditorAvailable: async () => true,
+			});
+
+			expect(mergedConfig.defaultEditor).toBeUndefined();
+			expect(await Bun.file(core.filesystem.configFilePath).text()).not.toContain("default_editor");
+		});
+
+		it("still offers the environment's editor to a project that has no config yet", async () => {
+			const { config } = await runAdvancedConfigWizard({
+				existingConfig: null,
+				cancelMessage: "Aborting initialization.",
+				promptImpl: acceptStartingValues,
+				isEditorAvailable: async () => true,
+			});
+
+			expect(config.defaultEditor).toBe("backlog-env-editor");
+		});
+	});
+
 	it("exposes config list/get/set subcommands", async () => {
 		const listOutput = await $`bun ${CLI_PATH} config list`.cwd(TEST_DIR).text();
 		expect(listOutput).toContain("Configuration:");
@@ -248,28 +296,29 @@ describe("Config commands", () => {
 		{ sync: true, publish: false, enabled: true },
 		{ sync: false, publish: true, enabled: true },
 		{ sync: true, publish: true, enabled: true },
-	])("keeps guarded sync preferences independent for sync=$sync and publish=$publish", async ({
-		sync,
-		publish,
-		enabled,
-	}) => {
-		const preparedConfig = await core.filesystem.loadConfig();
-		if (!preparedConfig) throw new Error("Expected config");
-		preparedConfig.filesystemOnly = false;
-		preparedConfig.remoteOperations = true;
-		await core.filesystem.saveConfig(preparedConfig);
-		await $`bun ${CLI_PATH} config set guardedTaskSync ${String(sync)}`.cwd(TEST_DIR).quiet();
-		await $`bun ${CLI_PATH} config set guardedTaskPublish ${String(publish)}`.cwd(TEST_DIR).quiet();
+	])(
+		"keeps guarded sync preferences independent for sync=$sync and publish=$publish",
+		async ({ sync, publish, enabled }) => {
+			const preparedConfig = await core.filesystem.loadConfig();
+			if (!preparedConfig) throw new Error("Expected config");
+			preparedConfig.filesystemOnly = false;
+			preparedConfig.remoteOperations = true;
+			await core.filesystem.saveConfig(preparedConfig);
+			await $`bun ${CLI_PATH} config set guardedTaskSync ${String(sync)}`.cwd(TEST_DIR).quiet();
+			await $`bun ${CLI_PATH} config set guardedTaskPublish ${String(publish)}`.cwd(TEST_DIR).quiet();
 
-		expect((await $`bun ${CLI_PATH} config get guardedTaskSync`.cwd(TEST_DIR).text()).trim()).toBe(String(sync));
-		expect((await $`bun ${CLI_PATH} config get guardedTaskPublish`.cwd(TEST_DIR).text()).trim()).toBe(String(publish));
+			expect((await $`bun ${CLI_PATH} config get guardedTaskSync`.cwd(TEST_DIR).text()).trim()).toBe(String(sync));
+			expect((await $`bun ${CLI_PATH} config get guardedTaskPublish`.cwd(TEST_DIR).text()).trim()).toBe(
+				String(publish),
+			);
 
-		core.filesystem.invalidateConfigCache();
-		const config = await core.filesystem.loadConfig();
-		expect(config?.guardedTaskSync).toBe(sync);
-		expect(config?.guardedTaskPublish).toBe(publish);
-		expect(isGuardedTaskSyncEnabled(config)).toBe(enabled);
-	});
+			core.filesystem.invalidateConfigCache();
+			const config = await core.filesystem.loadConfig();
+			expect(config?.guardedTaskSync).toBe(sync);
+			expect(config?.guardedTaskPublish).toBe(publish);
+			expect(isGuardedTaskSyncEnabled(config)).toBe(enabled);
+		},
+	);
 
 	it("keeps the dedicated guarded sync preference when publish is disabled", async () => {
 		const preparedConfig = await core.filesystem.loadConfig();
@@ -395,48 +444,6 @@ describe("Config commands", () => {
 
 	afterEach(async () => {
 		await safeCleanup(TEST_DIR);
-	});
-
-	it("should save and load defaultEditor config", async () => {
-		// Load initial config
-		const config = await core.filesystem.loadConfig();
-		expect(config).toBeTruthy();
-		expect(config?.defaultEditor).toBeUndefined();
-
-		// Set defaultEditor
-		if (config) {
-			config.defaultEditor = "nano";
-			await core.filesystem.saveConfig(config);
-		}
-
-		// Reload config and verify it was saved
-		const reloadedConfig = await core.filesystem.loadConfig();
-		expect(reloadedConfig).toBeTruthy();
-		expect(reloadedConfig?.defaultEditor).toBe("nano");
-	});
-
-	it("should handle config with and without defaultEditor", async () => {
-		// Initially undefined
-		let config = await core.filesystem.loadConfig();
-		expect(config?.defaultEditor).toBeUndefined();
-
-		// Set to a value
-		if (config) {
-			config.defaultEditor = "vi";
-			await core.filesystem.saveConfig(config);
-		}
-
-		config = await core.filesystem.loadConfig();
-		expect(config?.defaultEditor).toBe("vi");
-
-		// Clear the value
-		if (config) {
-			config.defaultEditor = undefined;
-			await core.filesystem.saveConfig(config);
-		}
-
-		config = await core.filesystem.loadConfig();
-		expect(config?.defaultEditor).toBeUndefined();
 	});
 
 	it("should preserve other config values when setting defaultEditor", async () => {
@@ -613,6 +620,10 @@ describe("Config commands", () => {
 
 		// Control: with no column-0 occurrence, an indented key is still the only value there is.
 		expect(core.filesystem.parseConfig('project_name: "P"\n\tstatuses: ["tabbed"]\n').statuses).toEqual(["tabbed"]);
+		expect(core.filesystem.parseConfig('project_name: "P"\n\tstatuses:\n\t  - Queued\n\t  - Done\n').statuses).toEqual([
+			"Queued",
+			"Done",
+		]);
 		expect(core.filesystem.parseConfig('project_name: "P"\n  statuses: ["spaced"]\n').statuses).toEqual(["spaced"]);
 	});
 
@@ -773,5 +784,75 @@ describe("Config commands", () => {
 		expect((await initCore.filesystem.loadConfig())?.defaultEditor).toBeUndefined();
 
 		await safeCleanup(initDir);
+	});
+});
+
+describe("defaultEditor when init runs again", () => {
+	let projectDir: string;
+
+	beforeEach(async () => {
+		projectDir = createUniqueTestDir("test-config-commands-reinit");
+		await mkdir(projectDir, { recursive: true });
+		await $`git init`.cwd(projectDir).quiet();
+	});
+
+	afterEach(async () => {
+		await safeCleanup(projectDir);
+	});
+
+	const configPath = () => join(projectDir, "backlog", "config.yml");
+
+	async function runInit(editorEnv: Record<string, string>) {
+		// Only the editor variables a test names reach the CLI, never the developer's own.
+		const { EDITOR: _editor, VISUAL: _visual, ...env } = process.env;
+		const result = await $`bun ${CLI_PATH} init "Editor Project" --defaults --integration-mode none`
+			.cwd(projectDir)
+			.env({ ...env, ...editorEnv })
+			.nothrow()
+			.quiet();
+		expect(result.exitCode).toBe(0);
+	}
+
+	async function editorLinesInConfigFile(): Promise<string[]> {
+		const content = await Bun.file(configPath()).text();
+		return content.split("\n").filter((line) => line.startsWith("default_editor"));
+	}
+
+	async function configGetEditor(): Promise<string> {
+		const result = await $`bun ${CLI_PATH} config get defaultEditor`.cwd(projectDir).nothrow().quiet();
+		return result.stdout.toString().trim();
+	}
+
+	for (const variable of ["EDITOR", "VISUAL"]) {
+		it(`does not write ${variable} into the config after the editor was cleared`, async () => {
+			await runInit({ EDITOR: "backlog-first-editor" });
+			expect(await editorLinesInConfigFile()).toEqual(['default_editor: "backlog-first-editor"']);
+
+			const cleared = await $`bun ${CLI_PATH} config set defaultEditor ${""}`.cwd(projectDir).nothrow().quiet();
+			expect(cleared.exitCode).toBe(0);
+			expect(await editorLinesInConfigFile()).toEqual([]);
+
+			await runInit({ [variable]: "backlog-second-editor" });
+			expect(await editorLinesInConfigFile()).toEqual([]);
+			expect(await configGetEditor()).toBe("defaultEditor is not set");
+		});
+	}
+
+	it("does not write EDITOR over a hand-written empty default_editor", async () => {
+		await runInit({});
+		await appendFile(configPath(), 'default_editor: ""\n');
+
+		await runInit({ EDITOR: "backlog-second-editor" });
+		expect(await Bun.file(configPath()).text()).not.toContain("backlog-second-editor");
+		expect(await configGetEditor()).toBe("defaultEditor is not set");
+	});
+
+	it("keeps the editor a first init took from VISUAL when init runs again", async () => {
+		await runInit({ VISUAL: "backlog-first-editor" });
+		expect(await editorLinesInConfigFile()).toEqual(['default_editor: "backlog-first-editor"']);
+
+		await runInit({ EDITOR: "backlog-second-editor", VISUAL: "backlog-second-editor" });
+		expect(await editorLinesInConfigFile()).toEqual(['default_editor: "backlog-first-editor"']);
+		expect(await configGetEditor()).toBe("backlog-first-editor");
 	});
 });
