@@ -1,11 +1,11 @@
 ---
 id: BACK-801
 title: Repair fork task IDs that collide with upstream after the 2026-11 merge
-status: To Do
+status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-11-12T16:42:00Z'
-updated_date: '2026-11-12T16:42:00Z'
+updated_date: '2026-11-12T19:36:00Z'
 labels: []
 dependencies: []
 ordinal: 407000
@@ -32,6 +32,17 @@ Merging upstream/main at 52b4ea3b (commit f8817c83 on merge/upstream-2026-11) le
 - [ ] #2 bun run check . passes when formatting/linting touched
 - [ ] #3 bun test (or scoped test) passes
 <!-- DOD:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Approved scheme (user, 2026-11-12): fork-only tasks get their own range starting at BACK-35001; tasks for upstream PRs are created on a branch made from upstream/main so they carry upstream numbers.
+1. One-off script (scripts/fork-renumber-tasks.ts) classifies each duplicate-ID file: same path in upstream/main = upstream-owned (untouched); fork file whose body matches an upstream record = copy (deleted, references point to the upstream ID); other fork file = fork-owned (renamed to BACK-35001+ in old-ID order, frontmatter id updated). BACK-801 itself moves into the range too.
+2. References to old fork IDs are rewritten only in fork-only task files; upstream-owned files are not touched. FORK.md and other docs are listed for manual review.
+3. Dry run first, shown to the user for approval; then apply with --write.
+4. Verify: backlog doctor shows no duplicates, task list/search work, backlog/completed untouched, then checks and tests.
+5. FORK.md: ID scheme, PR-task rule and old-to-new table.
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
