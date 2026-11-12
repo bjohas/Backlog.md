@@ -1,4 +1,4 @@
-// [FORK] Parses/serializes task_list_pane_width and document_base_url. See FORK.md; git diff upstream/main..main -- src/file-system/operations.ts
+// [FORK] Parses/serializes task_list_pane_width and document_base_url; the `browser --no-git` override. See FORK.md; git diff upstream/main..main -- src/file-system/operations.ts
 import type { Dirent } from "node:fs";
 import { lstat, mkdir, readdir, readFile, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -409,6 +409,18 @@ export class DraftIdentityError extends Error {
 	}
 }
 
+/**
+ * What `backlog browser --no-git` changes for its own process: the
+ * project is filesystem-only, so nothing commits, fetches, pushes or reads other branches.
+ */
+const GIT_DISABLED_CONFIG = {
+	filesystemOnly: true,
+	autoCommit: false,
+	remoteOperations: false,
+	guardedTaskPublish: false,
+	guardedTaskSync: false,
+} as const satisfies Partial<BacklogConfig>;
+
 export class FileSystem {
 	private resolvedBacklogDir: string;
 	private resolvedBacklogDirName: string;
@@ -417,6 +429,7 @@ export class FileSystem {
 	private readonly projectRoot: string;
 	private cachedConfig: BacklogConfig | null = null;
 	private cachedConfigSnapshot: { path: string; content: string } | null = null;
+	private gitDisabledForProcess = false;
 	private readonly parsedTaskFiles = new Map<string, ParsedTaskFile>();
 	private taskParseCacheEpoch = 0;
 	private taskFileReadGeneration = 0;
@@ -2306,7 +2319,21 @@ ${description || `Milestone: ${title}`}`,
 	}
 
 	// Config operations
+	/**
+	 * Makes this process treat the project as filesystem-only (GIT_DISABLED_CONFIG)
+	 * without touching config.yml: loadConfig() reports the override, saveConfig() keeps the
+	 * file's own values for those keys.
+	 */
+	disableGitForProcess(): void {
+		this.gitDisabledForProcess = true;
+	}
+
 	async loadConfig(): Promise<BacklogConfig | null> {
+		const config = await this.loadConfigFromDisk();
+		return config && this.gitDisabledForProcess ? { ...config, ...GIT_DISABLED_CONFIG } : config;
+	}
+
+	private async loadConfigFromDisk(): Promise<BacklogConfig | null> {
 		// Return cached config if available
 		if (this.cachedConfig !== null) {
 			return this.cachedConfig;
@@ -2341,6 +2368,14 @@ ${description || `Milestone: ${title}`}`,
 		};
 		if (this.configSource === "folder") {
 			delete normalizedConfig.backlogDirectory;
+		}
+		if (this.gitDisabledForProcess) {
+			// The caller saw the override in loadConfig(); write what the file says for those keys.
+			const onDisk = await this.loadConfigFromDisk();
+			for (const key of Object.keys(GIT_DISABLED_CONFIG) as (keyof typeof GIT_DISABLED_CONFIG)[]) {
+				if (onDisk?.[key] === undefined) delete normalizedConfig[key];
+				else normalizedConfig[key] = onDisk[key];
+			}
 		}
 		const configPath = this.resolvedConfigPath;
 		const content = this.serializeConfig(normalizedConfig);

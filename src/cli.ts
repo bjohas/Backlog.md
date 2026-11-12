@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// [FORK] Adds config get/set/list for taskListPaneWidth and documentBaseUrl. See FORK.md; git diff upstream/main..main -- src/cli.ts
+// [FORK] Adds config get/set/list for taskListPaneWidth and documentBaseUrl, and `browser --no-git`. See FORK.md; git diff upstream/main..main -- src/cli.ts
 
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
@@ -6295,11 +6295,15 @@ program
 	.option("-p, --port <port>", "port to run server on")
 	.option("--no-open", "don't automatically open browser")
 	.option("--non-interactive", "automatically use next free port without asking")
+	.option(
+		"--no-git",
+		"never commit, fetch, push or read other branches from this server, whatever the project config says; config.yml is not changed",
+	)
 	.action(async (options) => {
 		try {
 			const cwd = await requireProjectRoot();
 			const { BacklogServer, findNextAvailablePort, isPortAvailable } = await import("./server/index.ts");
-			const server = new BacklogServer(cwd);
+			const server = new BacklogServer(cwd, { gitDisabled: options.git === false });
 
 			// Load config to get default port
 			const core = new Core(cwd);

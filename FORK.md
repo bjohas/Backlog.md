@@ -99,6 +99,13 @@ Where it lives:
 
 Documented for users in `README.md` and `ADVANCED-CONFIG.md`.
 
+**`backlog browser --no-git`** (BACK-35047) is the opposite switch, for a server in a
+checkout whose Git history something else manages (the BeeWriter server). That one
+process treats the project as filesystem-only — no commit, fetch, push or branch scan,
+and guarded publish off — while `config.yml`, shared with every clone, stays as it is:
+`FileSystem.disableGitForProcess` overlays the values in `loadConfig()` and `saveConfig()`
+writes the file's own values for those keys, so saving web Settings cannot persist them.
+
 ### 3. TUI
 | Addition | Task |
 |---|---|
@@ -146,6 +153,7 @@ hand-placed marker, so it can't drift out of sync with the code:
 $ grep -rln "\[FORK\]" src/
 src/cli.ts
 src/file-system/operations.ts
+src/server/index.ts
 src/types/index.ts
 src/ui/board.ts
 src/ui/task-viewer-with-search.ts
@@ -162,7 +170,7 @@ src/web/components/TaskList.tsx
 upstream took that fix as [#955](https://github.com/MrLesk/Backlog.md/pull/955),
 so it is no longer a fork change. Several other shared files now carry fork logic
 without a banner yet — `src/git/operations.ts`, `src/core/backlog.ts`,
-`src/server/index.ts`, `src/core/init.ts`, `src/commands/advanced-config-wizard.ts`,
+`src/core/init.ts`, `src/commands/advanced-config-wizard.ts`,
 `src/ui/unified-view.ts`, `src/web/lib/api.ts`, `src/web/components/Navigation.tsx`,
 `src/web/components/Layout.tsx` — from the guarded-Git workstream. Adding those
 banners is outstanding.
