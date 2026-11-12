@@ -2,29 +2,19 @@
 
 ## State
 
-- Branch `merge/upstream-2026-11` carries the merge of `upstream/main` at `52b4ea3b`
-  (v1.55.3) as merge commit `f8817c83`, the FORK.md record, and the task ID repair
-  BACK-35043.
-- `main` is unchanged. The branch is **not** merged into `main` yet.
-- Details of the conflict resolutions: the merge commit message and the 2026-11-12 entry
-  under "Sync history" in [FORK.md](FORK.md). The ID scheme: "Task IDs" in FORK.md.
+- Local `main` (5ab70daa) has the `--no-ff` merge of `merge/upstream-2026-11`: upstream
+  v1.55.3 (merge commit `f8817c83`) and the task ID repair BACK-35043. `backlog doctor`
+  is clean on it. Details: the 2026-11-12 "Sync history" entry and "Task IDs" in
+  [FORK.md](FORK.md).
+- It is pushed to GitHub as branch `local-main-2026-11`, **not** as `main`.
 
-## Task IDs
+## Blocker before pushing main
 
-Repaired on the branch: fork tasks are at BACK-35001…35043 and upstream records have
-their `upstream/main` paths and IDs. `backlog doctor` reports no duplicate IDs in the
-tree; `task list`, `search` and `board export` work again. Its remaining
-"cross-branch" report pairs `main` with this branch and goes away once the branch is
-merged.
-
-## Landing on main
-
-Needs Alex's go-ahead (it places commits on `main`):
-
-```bash
-git switch main
-git merge --no-ff merge/upstream-2026-11
-```
+`origin/main` (59146dd3, 2026-09-15) has 10 commits local `main` never had, including
+fork tasks BACK-727 (list-view sort cycle) and BACK-728 (N creates a task from the list
+view). They conflict with upstream's rewritten list view and have to be ported. That
+work is BACK-35044. When it is done, merge `origin/main` into `main` with `--no-ff` and
+push `main` (no force-push).
 
 ## Tooling notes
 
