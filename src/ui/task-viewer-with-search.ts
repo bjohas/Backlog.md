@@ -21,7 +21,7 @@ import {
 	formatDateForDisplay,
 	formatTaskPlainText,
 } from "../formatters/task-plain-text.ts";
-import type { LabelMatchMode, Milestone, Task } from "../types/index.ts";
+import type { LabelMatchMode, Milestone, Task, TaskCreateInput } from "../types/index.ts";
 import { copyToClipboard } from "../utils/clipboard.ts";
 import { areLabelSelectionsEqual, collectAvailableLabels } from "../utils/label-filter.ts";
 import {
@@ -52,6 +52,7 @@ import {
 import { openMultiSelectFilterPopup, openSingleSelectFilterPopup } from "./components/filter-popup.ts";
 import { type BoundaryNavigationKey, createGenericList, type GenericList } from "./components/generic-list.ts";
 import { openHelpPopup } from "./components/help-popup.ts";
+import { openTaskComposer, type TaskComposerOptions } from "./components/task-composer.ts";
 import { formatFooterContent, getTaskListFooterContent } from "./footer-content.ts";
 import { formatHeading } from "./heading.ts";
 import { createLoadingScreen } from "./loading.ts";
@@ -62,6 +63,58 @@ import { archiveTaskFromTui, formatArchiveNotice, formatReadOnlyNotice } from ".
 import { createTaskRowPrefix, type TaskRowPrefix } from "./task-row-prefix.ts";
 import { formatTaskTypeBadge } from "./task-type.ts";
 import { addScrollKeys, createScreen, formatTuiTitle } from "./tui.ts";
+
+/**
+ * The orders O steps through in the list view, as `--sort` values. `undefined` is the default
+ * order of `task list` (ordinal, then priority, then ID, sectioned by status), the order the board
+ * keeps, so tabbing between the two views shows the same sequence until the user changes it.
+ */
+export const TASK_LIST_SORT_CYCLE: readonly (string | undefined)[] = [undefined, "id", "priority"];
+
+/** The order after `current`. A `--sort` value outside the cycle steps back to the default. */
+export function nextTaskListSort(current: string | undefined): string | undefined {
+	const index = TASK_LIST_SORT_CYCLE.indexOf(current?.toLowerCase());
+	return TASK_LIST_SORT_CYCLE[(index + 1) % TASK_LIST_SORT_CYCLE.length];
+}
+
+/**
+ * The row to select after the visible list is rebuilt. The list is destroyed and recreated on
+ * every filter, search and order change, so the selection has to be re-derived rather than
+ * carried: it follows the task by id, and only falls back to the top when that task is no
+ * longer listed or the caller is establishing an initial selection.
+ */
+export function resolveRestoredSelectionIndex(
+	tasks: readonly { id: string }[],
+	selectedTaskId: string,
+	forceFirst = false,
+): number {
+	if (forceFirst) return 0;
+	const index = tasks.findIndex((task) => task.id === selectedTaskId);
+	return Math.max(index, 0);
+}
+
+/**
+ * What to say after a task is created from the list. A draft or a task the active filters hide
+ * never appears in the list, so saying nothing would look like the composer had failed.
+ */
+export function getCreatedTaskListOutcome(
+	task: Task,
+	visible: boolean,
+): { focusTaskId?: string; message: string; tone: "green" | "yellow" } {
+	if (task.status.trim().toLowerCase() === "draft") {
+		return {
+			message: `Created ${task.id} as a draft. Drafts are not shown in the task list.`,
+			tone: "yellow",
+		};
+	}
+	if (!visible) {
+		return {
+			message: `Created ${task.id}, but it is hidden by the current task list filters.`,
+			tone: "yellow",
+		};
+	}
+	return { focusTaskId: task.id, message: `Created ${task.id}.`, tone: "green" };
+}
 
 export const DEFAULT_TASK_LIST_PANE_WIDTH = 40;
 
@@ -277,6 +330,8 @@ export async function viewTaskEnhanced(
 		subscribeUpdates?: (
 			update: (nextTasks: Task[], nextStatuses: string[], nextLabels: string[], nextSelectedTask?: Task) => void,
 		) => void;
+		createTask?: (input: TaskCreateInput) => Promise<Task>;
+		taskComposer?: (options: TaskComposerOptions) => Promise<Task | null>;
 		onTaskChange?: (task: Task) => void;
 		onTabPress?: () => Promise<void>;
 		onFilterChange?: (filters: {
@@ -411,6 +466,13 @@ export async function viewTaskEnhanced(
 	let milestoneFilter = options.milestoneFilter || "";
 	let labelMatch: LabelMatchMode = options.labelMatch ?? "any";
 	const taskLimit = options.limit;
+	// While the task composer is open, a watcher-driven update must not rebuild the list out
+	// from under it, nor race the composer's own persisted task into a duplicate. The data is
+	// still applied; only the render is deferred. Mirrors board.ts's guard of the same name.
+	let taskCreationOpen = false;
+	let taskCreationPendingUpdate = false;
+	// The order of the rows: starts as the `--sort` the list was opened with, then O changes it.
+	let listSort = options.sort;
 
 	if (options.labelFilter && options.labelFilter.length > 0) {
 		const availableSet = new Set(availableLabels.map((label) => label.toLowerCase()));
@@ -840,9 +902,9 @@ export async function viewTaskEnhanced(
 			? withReadiness(nextFilteredTasks, resolveDependencyCorpus()).filter((task) => task.isReady)
 			: nextFilteredTasks;
 		// Sorted, cut by the limit, then section after section.
-		const sortedTasks = sortTasks(readyFilteredTasks, options.sort, priorityOrder);
+		const sortedTasks = sortTasks(readyFilteredTasks, listSort, priorityOrder);
 		const limitedTasks = taskLimit !== undefined ? sortedTasks.slice(0, taskLimit) : sortedTasks;
-		return sectionTasks(limitedTasks, options.sort, statuses).flatMap((section) => section.tasks);
+		return sectionTasks(limitedTasks, listSort, statuses).flatMap((section) => section.tasks);
 	}
 
 	// Recomputes the rows and refreshes the task list, keeping the selection on the same task. When
@@ -907,10 +969,7 @@ export async function viewTaskEnhanced(
 		const listController = replaceTaskList();
 		if (listController) {
 			const forceFirst = startOnFirstRow;
-			let desiredIndex = filteredTasks.findIndex((t) => t.id === currentSelectedTask.id);
-			if (forceFirst || desiredIndex < 0) {
-				desiredIndex = 0;
-			}
+			const desiredIndex = resolveRestoredSelectionIndex(filteredTasks, currentSelectedTask.id, forceFirst);
 			const desiredTask = filteredTasks[desiredIndex];
 			if (desiredTask && desiredTask.id !== currentSelectedTask.id) {
 				currentSelectedTask = enrichTask(desiredTask) ?? desiredTask;
@@ -1284,7 +1343,7 @@ export async function viewTaskEnhanced(
 				" {cyan-fg}[Tab]{/} View | {cyan-fg}[←]{/} List | {cyan-fg}[↑↓]{/} Scroll | {cyan-fg}[E]{/} Edit | {cyan-fg}[Y]{/} Yank | {cyan-fg}[?]{/} Help | {cyan-fg}[q]{/} Quit";
 		} else {
 			// Task list help
-			content = getTaskListFooterContent({ hasProjects: configuredProjects.length > 0 });
+			content = getTaskListFooterContent({ hasProjects: configuredProjects.length > 0, sort: listSort ?? "default" });
 		}
 
 		setHelpBarContent(content);
@@ -1429,6 +1488,99 @@ export async function viewTaskEnhanced(
 		void openFilterPicker("status");
 	});
 
+	screen.key(["n", "N", "S-n"], async () => {
+		if (modalOpen || filterPopupOpen || currentFocus === "filters") return;
+		taskCreationOpen = true;
+		let createdTask: Task | null = null;
+		let creationError: unknown;
+		let hadPendingUpdate = false;
+		try {
+			createdTask = await runWithModalGuard(() =>
+				(options.taskComposer ?? openTaskComposer)({
+					screen,
+					statuses,
+					types: configuredTaskTypes,
+					priorities: priorityOptions.map((priority) => priority.value),
+					projects: configuredProjects,
+					persist: async (input) => {
+						if (options.createTask) return options.createTask(input);
+						const config = await core.filesystem.loadConfig();
+						return (await core.createTaskFromInput(input, config?.autoCommit ?? false)).task;
+					},
+				}),
+			);
+		} catch (error) {
+			creationError = error;
+		} finally {
+			taskCreationOpen = false;
+			hadPendingUpdate = taskCreationPendingUpdate;
+			taskCreationPendingUpdate = false;
+		}
+
+		const flushDeferredUpdate = () => {
+			if (hadPendingUpdate) {
+				applyFilters();
+				focusTaskList();
+			} else {
+				screen.render();
+			}
+		};
+
+		if (creationError) {
+			const message = creationError instanceof Error ? creationError.message : "Unknown error";
+			showTransientHelp(` {red-fg}Error opening task composer: ${message}{/}`, 3000);
+			flushDeferredUpdate();
+			return;
+		}
+		if (!createdTask) {
+			flushDeferredUpdate();
+			return;
+		}
+
+		const created = createdTask;
+		const draft = created.status.trim().toLowerCase() === "draft";
+		if (!draft) {
+			// A deferred watcher update may already have delivered this exact task, so upsert
+			// by id rather than pushing, or it is listed twice.
+			const existingIndex = allTasks.findIndex((candidate) => candidate.id === created.id);
+			allTasks =
+				existingIndex === -1
+					? [...allTasks, created]
+					: allTasks.map((candidate, index) => (index === existingIndex ? created : candidate));
+			taskSearchIndex = createTaskSearchIndex(allTasks);
+		}
+		applyFilters();
+
+		const visible = !draft && filteredTasks.some((candidate) => candidate.id === created.id);
+		if (visible) {
+			// applyFilters() destroys and recreates the list widget, dropping focus onto its
+			// parent pane; focusTaskList() re-focuses it and selects the new task through the
+			// same path arrow-key navigation uses, so the detail pane follows.
+			const index = filteredTasks.findIndex((candidate) => candidate.id === created.id);
+			if (index >= 0) focusTaskList(index);
+		}
+
+		const outcome = getCreatedTaskListOutcome(created, visible);
+		showTransientHelp(` {${outcome.tone}-fg}${outcome.message}{/}`);
+		screen.render();
+	});
+
+	screen.key(["o", "O"], () => {
+		if (modalOpen || filterPopupOpen || currentFocus === "filters") return;
+		const wasOnList = currentFocus === "list";
+		const selectedTaskId = currentSelectedTask.id;
+		listSort = nextTaskListSort(listSort);
+		applyFilters();
+		// applyFilters() destroys and recreates the list widget, which drops keyboard focus
+		// onto the filter header - the status filter then looks selected and the arrow keys
+		// move between filters instead of tasks. Re-focus the rebuilt list on the same task,
+		// which has moved to a different row under the new order.
+		if (wasOnList) {
+			focusTaskList(resolveRestoredSelectionIndex(filteredTasks, selectedTaskId));
+		}
+		updateHelpBar();
+	});
+
 	screen.key(["t", "T"], () => {
 		if (modalOpen || filterPopupOpen) return;
 		void openFilterPicker("type");
@@ -1561,6 +1713,12 @@ export async function viewTaskEnhanced(
 		labels = nextLabels;
 		availableLabels = collectAvailableLabels(allTasks, labels);
 		taskSearchIndex = createTaskSearchIndex(allTasks);
+		// The data above is applied either way; only the rebuild is deferred, so the composer
+		// keeps the screen until it closes and the list is rebuilt once with everything in it.
+		if (taskCreationOpen) {
+			taskCreationPendingUpdate = true;
+			return;
+		}
 
 		const previousTaskId = currentSelectedTask.id;
 		const currentTask =

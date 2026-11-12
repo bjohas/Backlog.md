@@ -103,6 +103,8 @@ Documented for users in `README.md` and `ADVANCED-CONFIG.md`.
 | Addition | Task |
 |---|---|
 | Board move failures surfaced in the footer | BACK-35038 |
+| List view: O cycles the order (default, ID, priority), named in the footer, keeping the selected task | BACK-35045 |
+| List view: N opens the task composer, as on the board | BACK-35046 |
 | ~~Carriage return bound alongside Enter~~ — superseded in the 2026-11 merge by upstream BACK-791 ([#1152](https://github.com/MrLesk/Backlog.md/pull/1152)), which fixes #1003 | BACK-35017 · PR [#1002](https://github.com/MrLesk/Backlog.md/pull/1002) closed upstream on 2026-09-27 |
 
 ### 4. Web UI
@@ -276,11 +278,34 @@ repair, and the ID scheme that stops it recurring, is BACK-35043: fork tasks mov
 BACK-35001+ and upstream records back to their own IDs (see "Task IDs" above), on the
 merge branch, before it was merged into `main`.
 
+**2026-11-12 (origin)** — merged `origin/main` at `59146dd3` (2026-09-15) into the
+fork's `main` via branch `tasks/back-35044-origin-main-integration` (BACK-35044). That
+history had been pushed from another checkout and never merged here: its own merge of
+upstream v1.52.0 and BACK-686 repair, the list-view sort (BACK-727) and task creation
+(BACK-728), and removal of two empty Setup Guide documents. Upstream had since rewritten
+the list view, so both features were ported rather than merged: the O cycle now steps
+through upstream's `--sort` orders (default, `id`, `priority`, starting from the `--sort`
+the list was opened with), and the rows keep upstream's status sections. The footer
+drops the Complete key with upstream. `scripts/fork-renumber-tasks.ts` (now rerunnable:
+tasks already in the fork range keep their IDs) returned origin's BACK-726 to upstream's
+BACK-686 and moved BACK-727/728 to BACK-35045/35046.
+
 ### Next sync
 
 Re-run `git log --oneline main..upstream/main` and diff-review before merging.
 `git merge-tree --write-tree --name-only main upstream/main` gives the conflict
 list without touching the working tree.
+
+- Check `origin/main` first (`git fetch origin && git status -sb`): a checkout that is
+  behind it must merge it before `main` can be pushed without force.
+- After merging, run `bun scripts/fork-renumber-tasks.ts` (dry run, then `--write`) and
+  `backlog doctor`; see "Task IDs".
+- Upstream needs Bun 1.4.4 (`bun run check:types` is `bun --check`).
+- A stray source copy in the working tree (such as the gitignored `pr-list-new-task/`)
+  is picked up by `bun run check:types` and by `bun test <path>`, whose path filter
+  matches substrings. Pass `./`-anchored test paths, or remove the copy.
+- `~/.local/bin/backlog` is a symlink to `dist/backlog`, so `bun run build` on any
+  branch replaces the installed CLI.
 
 ## Upstream PR candidates (clean branches, not in this fork)
 
