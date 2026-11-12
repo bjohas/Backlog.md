@@ -49,7 +49,7 @@ Five independent layers, each buildable/testable on its own:
    below.
 3. **TUI** (`src/ui/task-viewer-with-search.ts`, `src/ui/board.ts`,
    `src/ui/unified-view.ts`) — pane width, `R` sync binding, move-failure
-   footer, carriage-return Enter binding. Same build as upstream.
+   footer. Same build as upstream.
 4. **Web UI** (`src/web/**`) — maximize mode, checkbox rendering,
    document-link rewriting, comment UX, settings fields, Sync button. Same
    `bun run build`; no separate bundle.
@@ -103,7 +103,7 @@ Documented for users in `README.md` and `ADVANCED-CONFIG.md`.
 | Addition | Task |
 |---|---|
 | Board move failures surfaced in the footer | BACK-719 |
-| Carriage return bound alongside Enter (kitty and other CR terminals) | BACK-674 · upstream issue #1003, PR [#1002](https://github.com/MrLesk/Backlog.md/pull/1002) (open) |
+| ~~Carriage return bound alongside Enter~~ — superseded in the 2026-11 merge by upstream BACK-791 ([#1152](https://github.com/MrLesk/Backlog.md/pull/1152)), which fixes #1003 | BACK-674 · PR [#1002](https://github.com/MrLesk/Backlog.md/pull/1002) can be closed |
 
 ### 4. Web UI
 | Addition | Task |
@@ -219,6 +219,39 @@ task, and the upstream records that were renumbered will collide again on the ne
 merge. **Before the next sync, decide whether the fork should move to a reserved
 ID range so upstream records keep their own IDs permanently.**
 
+**2026-11-12** — merged `upstream/main` at `52b4ea3b` (v1.55.3, 129 upstream
+commits) via branch `merge/upstream-2026-11`, merge commit `f8817c83`. 11 files
+conflicted. Upstream now needs Bun 1.4.4 (`bun --check` is the type checker).
+
+Superseded fork fix: the board's `BOARD_ENTER_KEYS` (BACK-674). Upstream's
+BACK-791 binds `enter` and `linefeed`; also binding `return` would fire twice per
+carriage return.
+
+Upstream changes the fork had to be reconciled with:
+
+- **Task lifecycle redesign.** The completed-folder flow and `completeTask` are
+  gone; any status can be archived, and archived tasks can be deleted or restored.
+  `archiveTask`, `deleteTask`, `restoreTask`, cleanup (`archiveTerminalStatusTasks`)
+  and `promoteDraft` took upstream's bodies and are wrapped in
+  `withTaskMutationTransaction`; the transaction's commit mode is passed through
+  upstream's own `shouldAutoCommit` calls, which keeps the fork's diff there small.
+- **HTML parsing switched off in the web preview.** Upstream no longer escapes
+  `<`, so checkbox-span offsets are source offsets and the escape-offset mapping
+  was dropped.
+- **`isReadOnly` replaces `isFromOtherBranch`** in the task modal; the fork's Copy
+  ID and comment-from-preview buttons are gated on it.
+
+Known test conflict: three tests in `web-task-details-modal-final-summary.test.tsx`
+assert that preview mode shows no "Add comment" button, which the fork adds on
+purpose (BACK-656). They fail on `main` too.
+
+**Task IDs collided again**, as predicted above: 27 groups, BACK-686…725. The
+merge leaves them in place because `backlog doctor --fix` would renumber
+upstream-owned records too, allocate from BACK-801 (upstream PR #1195), and move
+all of `backlog/completed/` into `backlog/archive/tasks/` ahead of upstream. The
+repair, and the ID scheme that stops it recurring, is BACK-801. Until it is done,
+`task list` and `search` fail on the merged tree, so the merge is not yet on `main`.
+
 ### Next sync
 
 Re-run `git log --oneline main..upstream/main` and diff-review before merging.
@@ -236,7 +269,7 @@ only source and test changes required for its PR, with no fork-specific metadata
 task files, or config changes.
 
 ### `pr/enter-key` (worktree: `enter-key/`)
-**Status:** ✅ Submitted — [PR #1002](https://github.com/MrLesk/Backlog.md/pull/1002)
+**Status:** ⛔ Superseded by upstream [#1152](https://github.com/MrLesk/Backlog.md/pull/1152) (BACK-791), which fixes #1003 — PR [#1002](https://github.com/MrLesk/Backlog.md/pull/1002) can be closed
 **Issue:** [#1003](https://github.com/MrLesk/Backlog.md/issues/1003)
 **Changes:**
 - `src/ui/board.ts`: bind `"return"` alongside `"enter"` via a new exported `BOARD_ENTER_KEYS`
