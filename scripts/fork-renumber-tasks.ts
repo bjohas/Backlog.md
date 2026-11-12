@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * [FORK] One-off repair of task IDs that collide with upstream (BACK-801).
+ * [FORK] Repair of task IDs that collide with upstream (BACK-35043, rerun in BACK-35044).
  *
  * The fork and upstream share one `backlog/` folder and one `BACK-` counter. The 2026-09
  * `backlog doctor --fix` kept fork tasks on numbers upstream also uses and moved upstream's
@@ -12,7 +12,8 @@
  * For every task file in the working tree whose path does not exist in `upstream/main`:
  * - same file-name slug as an upstream record missing from the tree: it is that upstream
  *   record under a fork number, and is moved back to upstream's path and ID;
- * - otherwise it is a fork task and moves to the next ID from BACK-35001, in old-ID order.
+ * - otherwise it is a fork task and moves to the next free ID in the fork range, in old-ID
+ *   order. Tasks already in the range keep their IDs, so the script can be rerun after a sync.
  * A restored upstream record must then equal its `upstream/main` version byte for byte.
  * References in fork tasks and the docs listed in FORK_DOCS are rewritten from the fork-main
  * numbering to the new IDs. Upstream records, written in upstream numbering, are not rewritten.
@@ -26,7 +27,7 @@ import { basename, dirname, join } from "node:path";
 const UPSTREAM_REF = "upstream/main";
 const FORK_RANGE_START = 35001;
 const TASK_DIRS = ["backlog/tasks/", "backlog/completed/", "backlog/archive/tasks/"];
-const FORK_DOCS = ["FORK.md", "backlog/docs/doc-5", "backlog/docs/reference/doc-4"];
+const FORK_DOCS = ["FORK.md", "backlog/docs/reference/doc-4"];
 // BACK-801 is this repair's own task: its text names the colliding numbers themselves.
 const NO_REWRITE_IDS = new Set([801]);
 const write = process.argv.includes("--write");
@@ -61,7 +62,10 @@ const workingFiles = git("ls-files", "-z", "backlog/")
 const upstreamPaths = new Set(upstreamFiles.map((file) => file.path));
 const workingPaths = new Set(workingFiles.map((file) => file.path));
 const missingUpstream = upstreamFiles.filter((file) => !workingPaths.has(file.path));
-const forkOnly = workingFiles.filter((file) => !upstreamPaths.has(file.path)).sort((a, b) => a.id - b.id);
+const isInForkRange = (file: TaskFile) => file.id >= FORK_RANGE_START;
+const forkOnly = workingFiles
+	.filter((file) => !upstreamPaths.has(file.path) && !isInForkRange(file))
+	.sort((a, b) => a.id - b.id);
 
 interface Move {
 	from: TaskFile;
@@ -70,7 +74,7 @@ interface Move {
 	kind: "upstream record back to its ID" | "fork task to fork range";
 }
 const moves: Move[] = [];
-let nextForkId = FORK_RANGE_START;
+let nextForkId = Math.max(FORK_RANGE_START - 1, ...workingFiles.filter(isInForkRange).map((file) => file.id)) + 1;
 for (const file of forkOnly) {
 	const upstream = missingUpstream.filter((candidate) => candidate.slug === file.slug);
 	if (upstream.length > 1) throw new Error(`${file.path}: several upstream records share its slug`);
