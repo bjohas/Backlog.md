@@ -103,7 +103,7 @@ Documented for users in `README.md` and `ADVANCED-CONFIG.md`.
 | Addition | Task |
 |---|---|
 | Board move failures surfaced in the footer | BACK-719 |
-| ~~Carriage return bound alongside Enter~~ — superseded in the 2026-11 merge by upstream BACK-791 ([#1152](https://github.com/MrLesk/Backlog.md/pull/1152)), which fixes #1003 | BACK-674 · PR [#1002](https://github.com/MrLesk/Backlog.md/pull/1002) can be closed |
+| ~~Carriage return bound alongside Enter~~ — superseded in the 2026-11 merge by upstream BACK-791 ([#1152](https://github.com/MrLesk/Backlog.md/pull/1152)), which fixes #1003 | BACK-674 · PR [#1002](https://github.com/MrLesk/Backlog.md/pull/1002) closed upstream on 2026-09-27 |
 
 ### 4. Web UI
 | Addition | Task |
@@ -269,7 +269,7 @@ only source and test changes required for its PR, with no fork-specific metadata
 task files, or config changes.
 
 ### `pr/enter-key` (worktree: `enter-key/`)
-**Status:** ⛔ Superseded by upstream [#1152](https://github.com/MrLesk/Backlog.md/pull/1152) (BACK-791), which fixes #1003 — PR [#1002](https://github.com/MrLesk/Backlog.md/pull/1002) can be closed
+**Status:** ⛔ Superseded by upstream [#1152](https://github.com/MrLesk/Backlog.md/pull/1152) (BACK-791), which fixes #1003 — PR [#1002](https://github.com/MrLesk/Backlog.md/pull/1002) closed upstream on 2026-09-27
 **Issue:** [#1003](https://github.com/MrLesk/Backlog.md/issues/1003)
 **Changes:**
 - `src/ui/board.ts`: bind `"return"` alongside `"enter"` via a new exported `BOARD_ENTER_KEYS`
