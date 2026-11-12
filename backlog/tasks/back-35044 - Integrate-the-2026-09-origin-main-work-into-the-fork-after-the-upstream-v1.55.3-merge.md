@@ -3,10 +3,11 @@ id: BACK-35044
 title: >-
   Integrate the 2026-09 origin/main work into the fork after the upstream
   v1.55.3 merge
-status: To Do
+status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-11-12T20:23:00Z'
+updated_date: '2026-11-12T20:29:00Z'
 labels: []
 dependencies: []
 ordinal: 408000
