@@ -1,3 +1,4 @@
+// [FORK] BacklogServer accepts gitDisabled for `browser --no-git`. See FORK.md; git diff upstream/main..main -- src/server/index.ts
 import net from "node:net";
 import { dirname, isAbsolute, join } from "node:path";
 import type { Server, ServerWebSocket } from "bun";
@@ -263,8 +264,9 @@ export class BacklogServer {
 	private pendingDataBroadcastScope: "tasks" | "milestones" = "tasks";
 	private storeReadyBroadcasted = false;
 
-	constructor(projectPath: string) {
+	constructor(projectPath: string, options: { gitDisabled?: boolean } = {}) {
 		this.core = new Core(projectPath, { enableWatchers: true });
+		if (options.gitDisabled) this.core.filesystem.disableGitForProcess();
 	}
 
 	private async resolveMilestoneInput(milestone: string): Promise<string> {
