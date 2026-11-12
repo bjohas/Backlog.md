@@ -1,11 +1,11 @@
 ---
 id: BACK-35045
-title: 'Sort the TUI list view, defaulting to the board''s order'
+title: Sort the TUI list view, defaulting to the board's order
 status: Done
 assignee:
   - '@claude'
-created_date: '2026-09-15 13:59'
-updated_date: '2026-09-15 14:26'
+created_date: 2026-09-15 13:59
+updated_date: '2026-11-12T20:44:00Z'
 labels: []
 dependencies: []
 ordinal: 320000
@@ -52,6 +52,8 @@ Implemented across footer-content.ts (sort segment), task-viewer-with-search.ts 
 Verified: bunx tsc --noEmit and bun run check . clean; full suite 2936 pass / 8 skip / 20 fail, every failure in the known pre-existing set and unchanged by this work. The two help-popup failures fail identically with and without the added shortcut row, checked by reverting the row and re-running.
 
 AC #4 and #6 are not checked. Switching order preserves the selection because applyFilters() already re-selects by task id (it computes desiredIndex from currentSelectedTask.id and only moves when the task is gone), so the behaviour is inherited rather than added. That path is not covered by an automated test here: asserting it needs a driven screen, and the selection logic is inline in applyFilters rather than exported. The ordering itself, the cycle helper, the footer label and the help entry are all covered.
+
+Ported in BACK-35044 (2026-11-12) onto upstream v1.55.3, which rewrote the list view: the order cycle now steps through the `task list --sort` orders (default, id, priority) and the rows keep upstream's status sections; the footer no longer offers Complete.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

@@ -4,8 +4,8 @@ title: Create tasks from the TUI list view with N
 status: Done
 assignee:
   - '@claude'
-created_date: '2026-09-15 14:35'
-updated_date: '2026-09-15 14:46'
+created_date: 2026-09-15 14:35
+updated_date: '2026-11-12T20:44:00Z'
 labels: []
 dependencies: []
 ordinal: 321000
@@ -42,6 +42,8 @@ Re-applied PR 963 against current main rather than merging the branch, which is 
 One deliberate difference from the PR: the watcher guard sits after the data assignments rather than before them, so allTasks, statuses, labels and the search index are all applied while the composer is open and only the rebuild is deferred. The PR's early return skipped the later assignments, which did not match its own comment.
 
 Verified: the five tests from PR 963 pass unmodified against this implementation (src/test/tui-task-list-new-task-binding.test.ts, ported verbatim); bunx tsc --noEmit and bun run check . clean; full suite 2939 pass / 8 skip / 20 fail, the same known pre-existing set with no new failures. Built and confirmed the strings are present in dist/backlog, which ~/.local/bin/backlog resolves to.
+
+Ported in BACK-35044 (2026-11-12) onto upstream v1.55.3, which rewrote the list view: the order cycle now steps through the `task list --sort` orders (default, id, priority) and the rows keep upstream's status sections; the footer no longer offers Complete.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
