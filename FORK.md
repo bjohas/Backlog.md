@@ -104,7 +104,7 @@ checkout whose Git history something else manages (the BeeWriter server). That o
 process treats the project as filesystem-only — no commit, fetch, push or branch scan,
 and guarded publish off — while `config.yml`, shared with every clone, stays as it is:
 `FileSystem.disableGitForProcess` overlays the values in `loadConfig()` and `saveConfig()`
-writes the file's own values for those keys, so saving web Settings cannot persist them.
+writes the file's own values for those keys, so saving web Settings cannot persist them. `/api/status` reports `filesystemOnly`, and the page then shows no Sync button or sync message and sends no `/api/sync` (BACK-35049; the same for a project with `filesystem_only: true`).
 
 ### 3. TUI
 | Addition | Task |

@@ -90,12 +90,14 @@ describe("browser --no-git", () => {
 		expect(await commitCount()).toBe(before);
 	});
 
-	it("reports sync as disabled instead of running Git", async () => {
+	it("reports sync as disabled instead of running Git, and tells the page it does not use Git", async () => {
 		const base = await startServer(true);
 
 		const result = (await (await fetch(`${base}/api/sync`, { method: "POST" })).json()) as { status: string };
 
 		expect(result.status).toBe("disabled");
+		const status = (await (await fetch(`${base}/api/status`)).json()) as { filesystemOnly: boolean };
+		expect(status.filesystemOnly).toBe(true);
 	});
 
 	it("keeps config.yml's Git settings when web Settings are saved", async () => {
@@ -122,6 +124,8 @@ describe("browser --no-git", () => {
 
 	it("commits as configured without the switch", async () => {
 		const base = await startServer(false);
+		const status = (await (await fetch(`${base}/api/status`)).json()) as { filesystemOnly: boolean };
+		expect(status.filesystemOnly).toBe(false);
 		await $`git config --unset-all remote.origin.url`.cwd(projectDir).quiet().nothrow();
 		// Guarded publish needs a remote; auto-commit alone shows the switch is what stops the commit.
 		const core = new Core(projectDir);

@@ -260,6 +260,8 @@ function AppContent() {
   // Initialization state
   const [isInitialized, setIsInitialized] = useState<boolean | null>(null);
   const [externalEditor, setExternalEditor] = useState<ExternalDocumentEditor | null>(null);
+  // Without Git (`browser --no-git`, `filesystem_only`) there is nothing to sync: no Sync button, no sync calls.
+  const [canSync, setCanSync] = useState(false);
   
   // Centralized data state
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -328,6 +330,7 @@ function AppContent() {
       try {
         const status = await apiClient.checkStatus();
         setExternalEditor(status.externalEditor ?? null);
+        setCanSync(status.filesystemOnly !== true);
         setIsInitialized(status.initialized);
       } catch (error) {
         // If we can't check status, assume not initialized
@@ -767,7 +770,7 @@ function AppContent() {
   }, [refreshData]);
 
   useEffect(() => {
-    if (isInitialized !== true) return;
+    if (isInitialized !== true || !canSync) return;
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible") {
         void handleSync(false);
@@ -776,7 +779,7 @@ function AppContent() {
     void handleSync(false);
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => document.removeEventListener("visibilitychange", onVisibilityChange);
-  }, [handleSync, isInitialized]);
+  }, [handleSync, isInitialized, canSync]);
 
 	const applyReorderedTasks = useCallback((updatedTasks: Task[], requestTask: Task) => {
 		const current = tasksRef.current;
@@ -1071,7 +1074,7 @@ function AppContent() {
                 loadingMessage={loadingMessage}
                 error={loadError}
                 onRefreshData={refreshData}
-                onSync={handleSync}
+                onSync={canSync ? handleSync : undefined}
                 syncResult={syncResult}
                 syncError={syncError}
                 isSyncPending={isSyncPending}

@@ -1,4 +1,4 @@
-// [FORK] BacklogServer accepts gitDisabled for `browser --no-git`, and serves the page with relative asset addresses for a path prefix. See FORK.md; git diff upstream/main..main -- src/server/index.ts
+// [FORK] BacklogServer accepts gitDisabled for `browser --no-git` (reported in /api/status as filesystemOnly), and serves the page with relative asset addresses for a path prefix. See FORK.md; git diff upstream/main..main -- src/server/index.ts
 import net from "node:net";
 import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import type { Server, ServerWebSocket } from "bun";
@@ -2106,6 +2106,7 @@ export class BacklogServer {
 				backlogDirectorySource: backlogResolution.source,
 				configLocation: backlogResolution.configSource,
 				rootConfigPath: backlogResolution.rootConfigPath,
+				filesystemOnly: config?.filesystemOnly === true,
 				externalEditor: this.externalEditorStatus(),
 			});
 		} catch (error) {

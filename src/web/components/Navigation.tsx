@@ -6,7 +6,8 @@ import ThemeToggle from './ThemeToggle';
 interface NavigationProps {
     projectName: string;
     loadingMessage?: string | null;
-    onSync: () => Promise<void>;
+    /** Absent when the server does not use Git: no Sync button and no sync message. */
+    onSync?: () => Promise<void>;
     syncResult?: GuardedTaskSyncResult | null;
     syncError?: string | null;
     isSyncPending?: boolean;
@@ -53,11 +54,12 @@ const Navigation: React.FC<NavigationProps> = ({ projectName, loadingMessage, on
                 </div>
                 <div className="flex items-center gap-3">
                     <BranchIndexingIndicator message={loadingMessage} />
-                    {syncMessage && (
+                    {onSync && syncMessage && (
                         <span className={`text-sm ${syncTone}`} role="status" aria-live="polite">
                             {syncMessage}
                         </span>
                     )}
+                    {onSync && (
                     <button
                         type="button"
                         onClick={() => void onSync()}
@@ -66,6 +68,7 @@ const Navigation: React.FC<NavigationProps> = ({ projectName, loadingMessage, on
                     >
                         {isSyncPending ? 'Syncing…' : 'Sync'}
                     </button>
+                    )}
                     <ThemeToggle />
                 </div>
             </div>
