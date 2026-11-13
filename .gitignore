@@ -73,3 +73,5 @@ test-benchmark-report.json
 .terminal-wrapper-logs/
 .twrw
 pr-list-new-task/
+# Files kept on this machine but not tracked
+local/

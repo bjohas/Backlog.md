@@ -34,7 +34,7 @@ function renderMarkdown(source: string, tasks: Task[] = knownTasks): string {
 
 function taskLinks(html: string): string[] {
 	const rendered = new JSDOM(html).window.document;
-	return Array.from(rendered.querySelectorAll('a[href^="/tasks/"]')).map((link) => link.getAttribute("href") ?? "");
+	return Array.from(rendered.querySelectorAll('a[href^="/tasks/"], a[href^="tasks/"]')).map((link) => link.getAttribute("href") ?? "");
 }
 
 /** The preview parsed into a DOM, so assertions read what the browser shows rather than the markup. */
@@ -131,16 +131,16 @@ describe("MermaidMarkdown", () => {
 		]);
 	});
 
-	it("automatically links task IDs to /tasks/:id", () => {
+	it("automatically links task IDs to tasks/:id, relative to the page's base", () => {
 		const html = renderMarkdown("Related task: TASK-358.8 and BACK-123.");
 
-		expect(taskLinks(html)).toEqual(["/tasks/TASK-358.8", "/tasks/BACK-123"]);
+		expect(taskLinks(html)).toEqual(["tasks/TASK-358.8", "tasks/BACK-123"]);
 	});
 
 	it("links task IDs written in lower case to their canonical task", () => {
 		const html = renderMarkdown("See back-123 for context.");
 
-		expect(taskLinks(html)).toEqual(["/tasks/BACK-123"]);
+		expect(taskLinks(html)).toEqual(["tasks/BACK-123"]);
 	});
 
 	it("does not auto-link task IDs inside code backticks or existing links", () => {
@@ -153,7 +153,7 @@ describe("MermaidMarkdown", () => {
 	it("does not auto-link task IDs inside fenced code blocks", () => {
 		const html = renderMarkdown("Run this:\n\n```bash\nbacklog task view TASK-100\n```\n\nThen open BACK-123.");
 
-		expect(taskLinks(html)).toEqual(["/tasks/BACK-123"]);
+		expect(taskLinks(html)).toEqual(["tasks/BACK-123"]);
 	});
 
 	it("does not auto-link tokens that only look like task IDs", () => {
@@ -183,26 +183,26 @@ describe("MermaidMarkdown", () => {
 	it("links task IDs inside list items and headings", () => {
 		const html = renderMarkdown("## Blocked by BACK-123\n\n- depends on TASK-100\n");
 
-		expect(taskLinks(html)).toEqual(["/tasks/BACK-123", "/tasks/TASK-100"]);
+		expect(taskLinks(html)).toEqual(["tasks/BACK-123", "tasks/TASK-100"]);
 	});
 
 	it("links zero-padded references to the canonical task", () => {
 		const html = renderMarkdown("Padded reference BACK-0123 resolves.");
 
-		expect(taskLinks(html)).toEqual(["/tasks/BACK-123"]);
+		expect(taskLinks(html)).toEqual(["tasks/BACK-123"]);
 	});
 
 	it("links legacy non-numeric task IDs", () => {
 		const html = renderMarkdown("Legacy reference TASK-PREFIXED resolves.");
 
-		expect(taskLinks(html)).toEqual(["/tasks/TASK-PREFIXED"]);
+		expect(taskLinks(html)).toEqual(["tasks/TASK-PREFIXED"]);
 	});
 
 	it("leaves references plain when two loaded tasks share a canonical ID", () => {
 		const ambiguousTasks = taskFixtures("BACK-1", "BACK-01", "BACK-2");
 		const html = renderMarkdown("Ambiguous BACK-1 and unambiguous BACK-2.", ambiguousTasks);
 
-		expect(taskLinks(html)).toEqual(["/tasks/BACK-2"]);
+		expect(taskLinks(html)).toEqual(["tasks/BACK-2"]);
 	});
 
 	it("does not auto-link IDs embedded in non-ASCII identifiers", () => {

@@ -1,6 +1,8 @@
+// [FORK] Addresses start from the page's base path (lib/base-path.ts). See FORK.md; git diff upstream/main..main -- src/web/components/DraftsList.tsx
 import React, { useState, useEffect } from 'react';
 import { type Task } from '../../types';
 import StoredDate from './StoredDate';
+import { APP_BASE_PATH } from '../lib/base-path';
 import { formatPriorityLabel } from '../../utils/priority-config';
 
 interface DraftsListProps {
@@ -31,7 +33,7 @@ const DraftsList: React.FC<DraftsListProps> = ({ onEditTask, onNewDraft, dateFor
   const loadDrafts = async () => {
     try {
       setLoading(true);
-      const response = await fetch('/api/drafts');
+      const response = await fetch(`${APP_BASE_PATH}/api/drafts`);
       if (!response.ok) {
         throw new Error(`Failed to load drafts: ${response.statusText}`);
       }
@@ -54,7 +56,7 @@ const DraftsList: React.FC<DraftsListProps> = ({ onEditTask, onNewDraft, dateFor
 
   const handlePromoteDraft = async (draftId: string) => {
     try {
-      const response = await fetch(`/api/drafts/${draftId}/promote`, {
+      const response = await fetch(`${APP_BASE_PATH}/api/drafts/${draftId}/promote`, {
         method: 'POST',
       });
       

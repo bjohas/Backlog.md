@@ -280,6 +280,23 @@ describe("BacklogServer task SPA fallback", () => {
 		}
 	});
 
+	it("serves the page with asset addresses relative to its base, so a proxy prefix keeps them", async () => {
+		for (const path of ["/", "/board/001.02/fix-labels"]) {
+			const html = await (await fetch(`http://127.0.0.1:${serverPort}${path}`)).text();
+			// The page's own <base> stays for a proxy to replace; nothing else starts from the root.
+			expect(html, path).toContain('<base href="/">');
+			const rootAnchored = html.match(/<(?:script|link)\b[^>]*\s(?:src|href)="\/[^"]*"/g) ?? [];
+			expect(rootAnchored, path).toEqual([]);
+
+			const assets = [...html.matchAll(/<(?:script|link)\b[^>]*\s(?:src|href)="\.\/([^"]+)"/g)].map((m) => m[1]);
+			expect(assets.length, path).toBeGreaterThan(0);
+			for (const asset of assets) {
+				// Under the default <base href="/"> each one resolves to the root address it had before.
+				expect((await request(`/${asset}`)).status, asset).toBe(200);
+			}
+		}
+	});
+
 	it("keeps API routes distinct from the SPA wildcard", async () => {
 		const listResponse = await request("/api/tasks?crossBranch=false");
 		expect(listResponse.status).toBe(200);

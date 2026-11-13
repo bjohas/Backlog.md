@@ -1,4 +1,6 @@
+// [FORK] Addresses start from the page's base path (lib/base-path.ts). See FORK.md; git diff upstream/main..main -- src/web/hooks/useHealthCheck.tsx
 import { useCallback, useEffect, useRef, useState } from "react";
+import { appWebSocketUrl } from "../lib/base-path";
 
 const RECONNECT_DELAY = 5000; // 5 seconds
 
@@ -27,10 +29,7 @@ export function useHealthCheck() {
 		}
 
 		try {
-			const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-			const wsUrl = `${protocol}//${window.location.host}`;
-			
-			const ws = new WebSocket(wsUrl);
+			const ws = new WebSocket(appWebSocketUrl());
 			wsRef.current = ws;
 
 			ws.onopen = () => {

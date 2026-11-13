@@ -156,7 +156,7 @@ const startEditingWithUnsavedChanges = async (container: HTMLElement) => {
 };
 
 const findLinkByText = (container: HTMLElement, text: string): HTMLAnchorElement => {
-	const link = Array.from(container.querySelectorAll('a[href="/tasks/BACK-2"]')).find(
+	const link = Array.from(container.querySelectorAll('a[href$="tasks/BACK-2"]')).find(
 		(candidate) => candidate.textContent === text,
 	);
 	expect(link, `link "${text}"`).toBeTruthy();

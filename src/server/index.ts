@@ -1,4 +1,4 @@
-// [FORK] BacklogServer accepts gitDisabled for `browser --no-git`. See FORK.md; git diff upstream/main..main -- src/server/index.ts
+// [FORK] BacklogServer accepts gitDisabled for `browser --no-git`, and serves the page with relative asset addresses for a path prefix. See FORK.md; git diff upstream/main..main -- src/server/index.ts
 import net from "node:net";
 import { dirname, isAbsolute, join } from "node:path";
 import type { Server, ServerWebSocket } from "bun";
@@ -221,6 +221,19 @@ export function markHtmlBundleNoStore(bundle: Bun.HTMLBundle): Bun.HTMLBundle {
 }
 
 const spaIndexHtml = markHtmlBundleNoStore(indexHtml);
+/** Where the page is served exactly as Bun bundles it; the app's routes serve it through `serveIndexHtml`. */
+const BUNDLED_INDEX_ROUTE = "/_backlog/index.html";
+
+/**
+ * Bun writes the page's script, stylesheet and icon addresses from the root
+ * (`/chunk-….js`). A proxy that serves the board under a path prefix puts its own `<base href>`
+ * into the page, and root-anchored addresses ignore `<base>`, so they are made relative
+ * (`./chunk-….js`). Under the page's default `<base href="/">` they resolve to the same addresses
+ * as before. The `<base>` tag itself is left for the proxy to replace.
+ */
+export function relativizeAssetAddresses(html: string): string {
+	return html.replace(/(<(?:script|link)\b[^>]*?\s(?:src|href)=["'])\/(?!\/)/g, "$1./");
+}
 const BUNDLE_ASSET_DIR_ENV = "BACKLOG_BUNDLE_ASSET_DIR";
 const BROWSER_HOST = "127.0.0.1";
 const MIN_PORT = 1;
@@ -404,24 +417,30 @@ export class BacklogServer {
 		const shouldOpenBrowser = openBrowser && (config?.autoOpenBrowser ?? true);
 
 		try {
+			// The page's live updates connect to "/", so an upgrade there goes to the WebSocket handler.
+			const serveIndex = async (req: Request, server: Server<unknown>) =>
+				req.headers.get("upgrade") === "websocket"
+					? await this.handleRequest(req, server)
+					: await this.serveIndexHtml();
 			const serveOptions = {
 				port: finalPort,
 				hostname: BROWSER_HOST,
 				development: process.env.NODE_ENV === "development",
 				routes: {
-					"/": spaIndexHtml,
-					"/tasks": spaIndexHtml,
-					"/tasks/*": spaIndexHtml,
-					"/board": spaIndexHtml,
-					"/board/*": spaIndexHtml,
-					"/milestones": spaIndexHtml,
-					"/drafts": spaIndexHtml,
-					"/documentation": spaIndexHtml,
-					"/documentation/*": spaIndexHtml,
-					"/decisions": spaIndexHtml,
-					"/decisions/*": spaIndexHtml,
-					"/statistics": spaIndexHtml,
-					"/settings": spaIndexHtml,
+					[BUNDLED_INDEX_ROUTE]: spaIndexHtml,
+					"/": serveIndex,
+					"/tasks": serveIndex,
+					"/tasks/*": serveIndex,
+					"/board": serveIndex,
+					"/board/*": serveIndex,
+					"/milestones": serveIndex,
+					"/drafts": serveIndex,
+					"/documentation": serveIndex,
+					"/documentation/*": serveIndex,
+					"/decisions": serveIndex,
+					"/decisions/*": serveIndex,
+					"/statistics": serveIndex,
+					"/settings": serveIndex,
 
 					// API Routes using Bun's native route syntax
 					"/api/tasks": {
@@ -716,6 +735,16 @@ export class BacklogServer {
 			console.error("Error serving asset:", error);
 			return new Response("Internal Server Error", { status: 500 });
 		}
+	}
+
+	/** The page for every app route: Bun's bundled index.html with relative asset addresses. */
+	private async serveIndexHtml(): Promise<Response> {
+		const bundled = await fetch(`http://${BROWSER_HOST}:${this.getPort()}${BUNDLED_INDEX_ROUTE}`);
+		const headers = new Headers(bundled.headers);
+		// The body is re-encoded below, so the bundle's length, encoding and validators no longer apply.
+		for (const name of ["content-length", "content-encoding", "etag", "last-modified"]) headers.delete(name);
+		applyNoStoreHeaders(headers);
+		return new Response(relativizeAssetAddresses(await bundled.text()), { status: bundled.status, headers });
 	}
 
 	private async handleRequest(req: Request, server: Server<unknown>): Promise<Response> {
