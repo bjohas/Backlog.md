@@ -1,3 +1,4 @@
+// [FORK] Guarded-Git sync calls (POST /api/sync), and addresses start from the page's base path (lib/base-path.ts). See FORK.md; git diff upstream/main..main -- src/web/lib/api.ts
 import type { DuplicateRepairPlan, DuplicateRepairResult } from "../../core/duplicate-task-repair.ts";
 import type { TaskStatistics } from "../../core/statistics.ts";
 import type { TaskDetail } from "../../core/task-detail.ts";
@@ -14,8 +15,9 @@ import type {
 	Task,
 	TaskStatus,
 } from "../../types/index.ts";
+import { APP_BASE_PATH } from "./base-path.ts";
 
-const API_BASE = "/api";
+const API_BASE = `${APP_BASE_PATH}/api`;
 
 export interface ReorderTaskPayload {
 	taskId: string;

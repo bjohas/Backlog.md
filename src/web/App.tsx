@@ -1,4 +1,4 @@
-// [FORK] Wires DocumentBaseUrlProvider and passes documentBaseUrl into TaskDetailsModal. See FORK.md; git diff upstream/main..main -- src/web/App.tsx
+// [FORK] Wires DocumentBaseUrlProvider and passes documentBaseUrl into TaskDetailsModal; router and live updates follow the page's base path. See FORK.md; git diff upstream/main..main -- src/web/App.tsx
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useMatch, useNavigate } from 'react-router-dom';
 import Layout from './components/Layout';
@@ -31,6 +31,7 @@ import {
 } from '../types';
 import { formatDependencyCleanupMessage } from '../utils/dependency-graph';
 import { ApiError, apiClient, readMovedFailureState } from './lib/api';
+import { APP_BASE_PATH, appWebSocketUrl } from './lib/base-path';
 import type { TaskDetail } from '../core/task-detail';
 import type { DuplicateRepairPlan } from '../core/duplicate-task-repair';
 import { isValidTaskId } from '../utils/task-id';
@@ -863,8 +864,7 @@ function AppContent() {
 
 	const connect = () => {
 		if (disposed) return;
-		const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-		ws = new WebSocket(`${protocol}//${window.location.host}`);
+		ws = new WebSocket(appWebSocketUrl());
 		ws.onopen = () => {
 			if (disposed) return;
 			// Catch up on anything that changed while the socket was down.
@@ -1204,7 +1204,7 @@ function AppContent() {
 
 function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={APP_BASE_PATH || "/"}>
       <AppContent />
     </BrowserRouter>
   );

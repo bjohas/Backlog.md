@@ -126,6 +126,7 @@ writes the file's own values for those keys, so saving web Settings cannot persi
 | Documentation entries + in-task repo-relative links open against `documentBaseUrl` | BACK-35029, 35030 |
 | Default assignee / comment author from config, falling back to the server's git identity | BACK-35032 |
 | Search field and clearer placeholder in the All Tasks panel | BACK-35026, 35015 |
+| Served under a proxy path prefix: every address (data, WebSockets, router, task links, the page's script and stylesheet tags) starts from the page's `<base href>`, which the proxy injects (BeeWriter's `/tasks-ui/ORG/PROJECT/`); at `/` nothing changes | BACK-35048 |
 
 ### 5. Deployment (separate repo, not part of this build)
 `~/development/services/services/backlog.md-service` — systemd units serving
@@ -138,6 +139,7 @@ These carry fork logic and touch nothing upstream owns internally:
 
 - `src/web/utils/checkbox-spans.ts`
 - `src/web/utils/document-url.ts`
+- `src/web/lib/base-path.ts`
 - `src/web/contexts/DocumentBaseUrlContext.tsx`
 - `src/utils/utc-date-display.ts` (fork adds `formatDueDateForDisplay`)
 - `scripts/local-install.ts`, `install.sh`
@@ -160,10 +162,15 @@ src/ui/task-viewer-with-search.ts
 src/utils/clipboard.ts
 src/utils/config-watcher.ts
 src/web/App.tsx
+src/web/components/DraftsList.tsx
 src/web/components/MermaidMarkdown.tsx
 src/web/components/Settings.tsx
 src/web/components/TaskDetailsModal.tsx
 src/web/components/TaskList.tsx
+src/web/hooks/useHealthCheck.tsx
+src/web/lib/api.ts
+src/web/utils/task-id-links.ts
+src/web/utils/version.ts
 ```
 
 `src/web/components/SideNavigation.tsx` lost its banner in the 2026-09 merge:
@@ -171,7 +178,7 @@ upstream took that fix as [#955](https://github.com/MrLesk/Backlog.md/pull/955),
 so it is no longer a fork change. Several other shared files now carry fork logic
 without a banner yet — `src/git/operations.ts`, `src/core/backlog.ts`,
 `src/core/init.ts`, `src/commands/advanced-config-wizard.ts`,
-`src/ui/unified-view.ts`, `src/web/lib/api.ts`, `src/web/components/Navigation.tsx`,
+`src/ui/unified-view.ts`, `src/web/components/Navigation.tsx`,
 `src/web/components/Layout.tsx` — from the guarded-Git workstream. Adding those
 banners is outstanding.
 

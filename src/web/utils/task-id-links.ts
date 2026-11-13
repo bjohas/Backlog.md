@@ -1,3 +1,4 @@
+// [FORK] Addresses start from the page's base path (lib/base-path.ts). See FORK.md; git diff upstream/main..main -- src/web/utils/task-id-links.ts
 import type { Task } from "../../types/index.ts";
 import { canonicalTaskId } from "../../utils/task-id.ts";
 
@@ -66,7 +67,7 @@ function splitTaskIds(value: string, index: TaskIdIndex): MarkdownNode[] | null 
 			if (start > cursor) {
 				parts.push({ type: "text", value: value.slice(cursor, start) });
 			}
-			parts.push({ type: "link", url: `/tasks/${task.id}`, children: [{ type: "text", value: candidate }] });
+			parts.push({ type: "link", url: `tasks/${task.id}`, children: [{ type: "text", value: candidate }] });
 			cursor = end;
 		}
 
@@ -106,7 +107,8 @@ function linkTaskIds(node: MarkdownNode, index: TaskIdIndex): void {
 }
 
 /**
- * Remark plugin that turns known task IDs in markdown text into `/tasks/:id` links.
+ * Remark plugin that turns known task IDs in markdown text into `tasks/:id` links. They are
+ * relative, so they resolve against the page's `<base>` and stay under a proxy's path prefix.
  * Code fences and inline code hold no text children in mdast, so they are excluded by construction.
  */
 export function createTaskIdLinkPlugin(index: TaskIdIndex) {
