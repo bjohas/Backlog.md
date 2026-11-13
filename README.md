@@ -244,6 +244,9 @@ backlog browser --port 8080
 
 # Don't open browser automatically
 backlog browser --no-open
+
+# Edit documents in another editor, e.g. GitHub's: Edit becomes "Edit in GitHub"
+backlog browser --external-editor "https://github.com/OWNER/REPO/edit/main/{path}" --external-editor-label GitHub
 ```
 
 **Features:**

@@ -127,6 +127,7 @@ writes the file's own values for those keys, so saving web Settings cannot persi
 | Default assignee / comment author from config, falling back to the server's git identity | BACK-35032 |
 | Search field and clearer placeholder in the All Tasks panel | BACK-35026, 35015 |
 | Served under a proxy path prefix: every address (data, WebSockets, router, task links, the page's script and stylesheet tags) starts from the page's `<base href>`, which the proxy injects (BeeWriter's `/tasks-ui/ORG/PROJECT/`); at `/` nothing changes | BACK-35048 |
+| `backlog browser --external-editor <pattern with {path}> --external-editor-label <name>`: the Docs page's Edit opens that editor in the whole window, its own doc editor is off, New document creates the file and then goes there. Written for upstream (branch `tasks/back-802-doc-external-editor` from `upstream/main`, no PR yet) and merged here | BACK-802 |
 
 ### 5. Deployment (separate repo, not part of this build)
 `~/development/services/services/backlog.md-service` — systemd units serving

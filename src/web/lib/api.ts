@@ -15,6 +15,7 @@ import type {
 	Task,
 	TaskStatus,
 } from "../../types/index.ts";
+import type { ExternalEditor } from "../../utils/external-editor.ts";
 import { APP_BASE_PATH } from "./base-path.ts";
 
 const API_BASE = `${APP_BASE_PATH}/api`;
@@ -90,6 +91,13 @@ export interface InitializationStatus {
 	backlogDirectorySource?: "backlog" | ".backlog" | "custom" | null;
 	configLocation?: "folder" | "root" | null;
 	rootConfigPath?: string | null;
+	/** Set when `backlog browser` was started with `--external-editor`: documents are edited there. */
+	externalEditor?: ExternalDocumentEditor | null;
+}
+
+/** The external editor for documents, and the docs folder's path from the project root. */
+export interface ExternalDocumentEditor extends ExternalEditor {
+	docsDirectory: string;
 }
 
 // Enhanced error types for better error handling
