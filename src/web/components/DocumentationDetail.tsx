@@ -1,6 +1,6 @@
 import {useState, useEffect, memo, useCallback} from 'react';
 import {useParams, useNavigate, useSearchParams} from 'react-router-dom';
-import {apiClient, isAmbiguousIdConflict} from '../lib/api';
+import {apiClient, type ExternalDocumentEditor, isAmbiguousIdConflict} from '../lib/api';
 import MDEditor from '@uiw/react-md-editor';
 import MermaidMarkdown from './MermaidMarkdown';
 import {type Document} from '../../types';
@@ -11,6 +11,7 @@ import { useTheme } from '../contexts/ThemeContext';
 import { sanitizeUrlTitle } from '../utils/urlHelpers';
 import StoredDate from './StoredDate';
 import { documentIdKey } from '../../utils/document-id';
+import { externalEditorUrl } from '../../utils/external-editor';
 import { ArchiveButton, ArchivedLabel, ArchiveRefusal, useRecordArchive } from './RecordArchive';
 
 // Custom MDEditor wrapper for proper height handling
@@ -70,13 +71,26 @@ const getDocumentDirectory = (path?: string): string => {
     return path.split(/[\\/]+/).slice(0, -1).join('/');
 };
 
+/** The external editor's address for a document; `path` is relative to the docs folder. */
+const documentEditorUrl = (editor: ExternalDocumentEditor, path: string): string =>
+    externalEditorUrl(editor.urlPattern, `${editor.docsDirectory}/${path.split(/[\\/]+/).join('/')}`);
+
+const EDIT_ICON = (
+    <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+              d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+    </svg>
+);
+
 interface DocumentationDetailProps {
     docs: Document[];
     onRefreshData: () => Promise<void>;
     dateFormat?: string;
+    /** When set, documents are edited in this editor; the page only creates them and shows them. */
+    externalEditor?: ExternalDocumentEditor | null;
 }
 
-export default function DocumentationDetail({docs, onRefreshData, dateFormat}: DocumentationDetailProps) {
+export default function DocumentationDetail({docs, onRefreshData, dateFormat, externalEditor}: DocumentationDetailProps) {
     const {id, title} = useParams<{ id: string; title: string }>();
     const navigate = useNavigate();
     const [searchParams, setSearchParams] = useSearchParams();
@@ -99,8 +113,9 @@ export default function DocumentationDetail({docs, onRefreshData, dateFormat}: D
     const currentDocument = document && routeIdentity && documentIdKey(document.id) === routeIdentity ? document : null;
     const isArchived = currentDocument?.archived === true;
     // The editor opens on request (the Edit button, `?edit=true` in the URL, the new page), but never
-    // for an archived document: the request can come before or after the record has loaded.
-    const isEditing = editRequested && !isArchived;
+    // for an archived document: the request can come before or after the record has loaded. With an
+    // external editor only the new page opens it, for the title and folder.
+    const isEditing = editRequested && !isArchived && (!externalEditor || isNewDocument);
     const {archive, isArchiving, archiveError, dismissArchiveError} = useRecordArchive(
         'document',
         currentDocument && !isLoading && !isNewDocument ? {id: currentDocument.id, title: currentDocument.title} : null,
@@ -222,6 +237,12 @@ export default function DocumentationDetail({docs, onRefreshData, dateFormat}: D
             if (isNewDocument) {
                 // Create new document
                 const result = await apiClient.createDoc(normalizedTitle, content, normalizedPath);
+                if (externalEditor && result.path) {
+                    // The whole window, not only this page's frame, goes to the editor. A frame may set
+                    // another origin's `location.href`, but not call its `assign`.
+                    (window.top ?? window).location.href = documentEditorUrl(externalEditor, result.path);
+                    return;
+                }
                 // Refresh data and navigate to the new document
                 await onRefreshData();
                 // Show success toast
@@ -280,7 +301,7 @@ export default function DocumentationDetail({docs, onRefreshData, dateFormat}: D
         } finally {
             setIsSaving(false);
         }
-    }, [id, docTitle, docPath, originalDocPath, content, isNewDocument, onRefreshData, navigate, loadDocContent]);
+    }, [id, docTitle, docPath, originalDocPath, content, isNewDocument, externalEditor, onRefreshData, navigate, loadDocContent]);
 
     const handleEdit = () => {
         setEditRequested(true);
@@ -401,17 +422,26 @@ export default function DocumentationDetail({docs, onRefreshData, dateFormat}: D
                             <div className="flex items-center space-x-3">
                                 {isArchived ? null : !isEditing ? (
                                     <>
+                                    {externalEditor ? (
+                                        currentDocument?.path && (
+                                            <a
+                                                href={documentEditorUrl(externalEditor, currentDocument.path)}
+                                                target="_top"
+                                                className="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-offset-2 dark:focus:ring-offset-gray-900 transition-colors duration-200"
+                                            >
+                                                {EDIT_ICON}
+                                                Edit in {externalEditor.label}
+                                            </a>
+                                        )
+                                    ) : (
                                     <button
                                         onClick={handleEdit}
                                         className="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-offset-2 dark:focus:ring-offset-gray-900 transition-colors duration-200"
                                     >
-                                        <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor"
-                                             viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                                                  d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
-                                        </svg>
+                                        {EDIT_ICON}
                                         Edit
                                     </button>
+                                    )}
                                     {currentDocument && !isNewDocument && (
                                         <ArchiveButton onClick={archive} disabled={isArchiving} />
                                     )}
@@ -451,11 +481,13 @@ export default function DocumentationDetail({docs, onRefreshData, dateFormat}: D
                 {/* Content Section */}
                 <div className="flex-1 bg-gray-50 dark:bg-gray-800 transition-colors duration-200 flex flex-col">
                     <div className="flex-1 p-8 flex flex-col min-h-0">
-                        <MarkdownEditor
-                            value={content}
-                            onChange={(val) => setContent(val || '')}
-                            isEditing={isEditing}
-                        />
+                        {!(externalEditor && isNewDocument) && (
+                            <MarkdownEditor
+                                value={content}
+                                onChange={(val) => setContent(val || '')}
+                                isEditing={isEditing}
+                            />
+                        )}
                     </div>
                 </div>
 

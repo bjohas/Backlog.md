@@ -92,6 +92,7 @@ import {
 	hasDraftIdentityFindings,
 } from "./utils/duplicate-detection.ts";
 import { AmbiguousIdError, isAmbiguousIdError } from "./utils/entity-id.ts";
+import { type ExternalEditor, parseExternalEditor } from "./utils/external-editor.ts";
 import { findBacklogRoot } from "./utils/find-backlog-root.ts";
 import {
 	addListWindowOptions,
@@ -6158,11 +6159,23 @@ program
 	.option("-p, --port <port>", "port to run server on")
 	.option("--no-open", "don't automatically open browser")
 	.option("--non-interactive", "automatically use next free port without asking")
+	.option(
+		"--external-editor <pattern>",
+		"edit documents in another editor at this http(s) address; {path} becomes the file's path from the project root",
+	)
+	.option("--external-editor-label <name>", "the external editor's name, shown as 'Edit in <name>'")
 	.action(async (options) => {
 		try {
 			const cwd = await requireProjectRoot();
+			let externalEditor: ExternalEditor | undefined;
+			try {
+				externalEditor = parseExternalEditor(options.externalEditor, options.externalEditorLabel);
+			} catch (error) {
+				console.error(error instanceof Error ? error.message : String(error));
+				process.exit(1);
+			}
 			const { BacklogServer, findNextAvailablePort, isPortAvailable } = await import("./server/index.ts");
-			const server = new BacklogServer(cwd);
+			const server = new BacklogServer(cwd, { externalEditor });
 
 			// Load config to get default port
 			const core = new Core(cwd);

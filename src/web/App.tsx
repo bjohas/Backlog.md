@@ -27,7 +27,7 @@ import {
 	type TaskSearchResult,
 } from '../types';
 import { formatDependencyCleanupMessage } from '../utils/dependency-graph';
-import { ApiError, apiClient, readMovedFailureState } from './lib/api';
+import { ApiError, apiClient, type ExternalDocumentEditor, readMovedFailureState } from './lib/api';
 import type { TaskDetail } from '../core/task-detail';
 import type { DuplicateRepairPlan } from '../core/duplicate-task-repair';
 import { isValidTaskId } from '../utils/task-id';
@@ -253,6 +253,7 @@ function AppContent() {
   
   // Initialization state
   const [isInitialized, setIsInitialized] = useState<boolean | null>(null);
+  const [externalEditor, setExternalEditor] = useState<ExternalDocumentEditor | null>(null);
   
   // Centralized data state
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -315,6 +316,7 @@ function AppContent() {
     const checkInitStatus = async () => {
       try {
         const status = await apiClient.checkStatus();
+        setExternalEditor(status.externalEditor ?? null);
         setIsInitialized(status.initialized);
       } catch (error) {
         // If we can't check status, assume not initialized
@@ -1039,9 +1041,9 @@ function AppContent() {
             }
           />
             <Route path="drafts" element={<DraftsList onEditTask={openDraftModal} onNewDraft={handleNewDraft} dateFormat={config?.dateFormat} />} />
-            <Route path="documentation" element={<DocumentationDetail docs={docs} onRefreshData={refreshData} dateFormat={config?.dateFormat} />} />
-            <Route path="documentation/:id" element={<DocumentationDetail docs={docs} onRefreshData={refreshData} dateFormat={config?.dateFormat} />} />
-            <Route path="documentation/:id/:title" element={<DocumentationDetail docs={docs} onRefreshData={refreshData} dateFormat={config?.dateFormat} />} />
+            <Route path="documentation" element={<DocumentationDetail docs={docs} onRefreshData={refreshData} dateFormat={config?.dateFormat} externalEditor={externalEditor} />} />
+            <Route path="documentation/:id" element={<DocumentationDetail docs={docs} onRefreshData={refreshData} dateFormat={config?.dateFormat} externalEditor={externalEditor} />} />
+            <Route path="documentation/:id/:title" element={<DocumentationDetail docs={docs} onRefreshData={refreshData} dateFormat={config?.dateFormat} externalEditor={externalEditor} />} />
             <Route path="decisions" element={<DecisionDetail decisions={decisions} onRefreshData={refreshData} dateFormat={config?.dateFormat} />} />
             <Route path="decisions/:id" element={<DecisionDetail decisions={decisions} onRefreshData={refreshData} dateFormat={config?.dateFormat} />} />
             <Route path="decisions/:id/:title" element={<DecisionDetail decisions={decisions} onRefreshData={refreshData} dateFormat={config?.dateFormat} />} />

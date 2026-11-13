@@ -1,5 +1,5 @@
 import net from "node:net";
-import { dirname, isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import type { Server, ServerWebSocket } from "bun";
 import { DEFAULT_STATUSES } from "../constants/index.ts";
 import { CONTENT_RECORD_WORDS, Core, formatCleanupResult, RecordRefusedError } from "../core/backlog.ts";
@@ -25,6 +25,7 @@ import { launchBrowser } from "../utils/browser-launch.ts";
 import type { BrowserLoadingState } from "../utils/browser-loading-state.ts";
 import { normalizeDueDate } from "../utils/due-date.ts";
 import { isAmbiguousIdError } from "../utils/entity-id.ts";
+import type { ExternalEditor } from "../utils/external-editor.ts";
 import { resolveMilestoneInputForStorage } from "../utils/milestone-storage.ts";
 import { DRAFT_PREFIX, extractAnyPrefix, getTaskPrefixError } from "../utils/prefix-config.ts";
 import { formatValidPriorityValues, resolvePriorityValue } from "../utils/priority-config.ts";
@@ -263,8 +264,18 @@ export class BacklogServer {
 	private pendingDataBroadcastScope: "tasks" | "milestones" = "tasks";
 	private storeReadyBroadcasted = false;
 
-	constructor(projectPath: string) {
+	private readonly externalEditor: ExternalEditor | null;
+
+	constructor(projectPath: string, options: { externalEditor?: ExternalEditor } = {}) {
 		this.core = new Core(projectPath, { enableWatchers: true });
+		this.externalEditor = options.externalEditor ?? null;
+	}
+
+	/** The external editor for documents, with the docs folder's path from the project root. */
+	private externalEditorStatus() {
+		if (!this.externalEditor) return null;
+		const docsDirectory = relative(this.core.filesystem.rootDir, this.core.filesystem.docsDir).split(sep).join("/");
+		return { ...this.externalEditor, docsDirectory };
 	}
 
 	private async resolveMilestoneInput(milestone: string): Promise<string> {
@@ -2040,6 +2051,7 @@ export class BacklogServer {
 				backlogDirectorySource: backlogResolution.source,
 				configLocation: backlogResolution.configSource,
 				rootConfigPath: backlogResolution.rootConfigPath,
+				externalEditor: this.externalEditorStatus(),
 			});
 		} catch (error) {
 			console.error("Error getting status:", error);
@@ -2050,6 +2062,7 @@ export class BacklogServer {
 				backlogDirectorySource: null,
 				configLocation: null,
 				rootConfigPath: null,
+				externalEditor: this.externalEditorStatus(),
 			});
 		}
 	}
