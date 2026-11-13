@@ -91,6 +91,8 @@ export interface InitializationStatus {
 	backlogDirectorySource?: "backlog" | ".backlog" | "custom" | null;
 	configLocation?: "folder" | "root" | null;
 	rootConfigPath?: string | null;
+	/** True when this server never uses Git (`browser --no-git` or `filesystem_only`), so there is nothing to sync. */
+	filesystemOnly?: boolean;
 	/** Set when `backlog browser` was started with `--external-editor`: documents are edited there. */
 	externalEditor?: ExternalDocumentEditor | null;
 }

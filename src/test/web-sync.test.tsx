@@ -193,6 +193,27 @@ afterEach(() => {
 });
 
 describe("web guarded sync", () => {
+	it("shows no Sync button and never syncs when the server does not use Git", async () => {
+		let syncCalls = 0;
+		installInitialDataMocks();
+		apiClient.checkStatus = async () => ({ initialized: true, projectPath: "/tmp/web-sync", filesystemOnly: true });
+		apiClient.syncCurrentBranch = async () => {
+			syncCalls += 1;
+			return { status: "disabled", message: "Guarded task sync is disabled." };
+		};
+
+		const container = await mountApp();
+		await act(async () => {
+			document.dispatchEvent(new Event("visibilitychange"));
+			await Promise.resolve();
+		});
+
+		expect(syncCalls).toBe(0);
+		const labels = Array.from(container.querySelectorAll("button")).map((button) => button.textContent?.trim());
+		expect(labels).not.toContain("Sync");
+		expect(container.textContent).not.toContain("Guarded task sync is disabled.");
+	});
+
 	it("recovers only complete expected 409 sync results", async () => {
 		const client = new ApiClient({ retries: 0 });
 		globalThis.fetch = (async () =>

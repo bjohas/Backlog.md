@@ -17,7 +17,8 @@ interface LayoutProps {
 	loadingMessage?: string | null;
 	error?: Error | null;
 	onRefreshData: () => Promise<void>;
-	onSync: () => Promise<void>;
+	/** Absent when the server does not use Git: the navigation then shows no Sync button. */
+	onSync?: () => Promise<void>;
 	syncResult?: GuardedTaskSyncResult | null;
 	syncError?: string | null;
 	isSyncPending?: boolean;
