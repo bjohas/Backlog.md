@@ -53,7 +53,16 @@ describe("browser --external-editor", () => {
 		expect(() => parseExternalEditor(undefined, "BeeWriter")).toThrow("must be given together");
 		expect(() => parseExternalEditor("https://editor.example/w/", "BeeWriter")).toThrow("{path}");
 		expect(() => parseExternalEditor("file:///srv/{path}", "BeeWriter")).toThrow("http(s)");
+		expect(() => parseExternalEditor("//other.example/{path}", "BeeWriter")).toThrow("http(s)");
+		expect(() => parseExternalEditor("w/{path}", "BeeWriter")).toThrow("http(s)");
 		expect(parseExternalEditor(undefined, undefined)).toBeUndefined();
+	});
+
+	it("accepts a same-site path, for a page behind a proxy that does not know its public address", () => {
+		expect(parseExternalEditor("/w/ORG/PROJECT/{path}", "BeeWriter")).toEqual({
+			urlPattern: "/w/ORG/PROJECT/{path}",
+			label: "BeeWriter",
+		});
 	});
 
 	it("stops the browser command with the error", async () => {

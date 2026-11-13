@@ -6161,7 +6161,7 @@ program
 	.option("--non-interactive", "automatically use next free port without asking")
 	.option(
 		"--external-editor <pattern>",
-		"edit documents in another editor at this http(s) address; {path} becomes the file's path from the project root",
+		"edit documents in another editor at this http(s) address or same-site /path; {path} becomes the file's path from the project root",
 	)
 	.option("--external-editor-label <name>", "the external editor's name, shown as 'Edit in <name>'")
 	.action(async (options) => {

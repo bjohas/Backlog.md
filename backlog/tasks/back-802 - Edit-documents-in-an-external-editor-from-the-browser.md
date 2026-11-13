@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-11-13T09:15:00Z'
-updated_date: '2026-11-13T13:35:00Z'
+updated_date: '2026-11-13T16:07:00Z'
 labels: []
 dependencies: []
 type: feature
@@ -20,7 +20,7 @@ Some boards are kept where another program edits the files: a hosted Markdown ed
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 backlog browser accepts --external-editor <pattern> and --external-editor-label <name> together; the pattern is an http(s) address containing {path}, and a missing partner or a bad pattern stops the command with an error
+- [x] #1 backlog browser accepts --external-editor <pattern> and --external-editor-label <name> together; the pattern is an http(s) address or a same-site path starting with / (for a page behind a proxy that does not know its public address), containing {path}, and a missing partner or a bad pattern stops the command with an error
 - [x] #2 Without the options the Docs page is unchanged
 - [x] #3 With them, a document's Edit button reads 'Edit in <name>' and opens the pattern with {path} replaced by the document's path from the project root, each segment percent-encoded (so spaces become %20), in the top-level window
 - [x] #4 With them, the browser offers no document editor of its own, including for ?edit=true links
@@ -50,6 +50,8 @@ Some boards are kept where another program edits the files: a hosted Markdown ed
 
 <!-- SECTION:NOTES:BEGIN -->
 Verified in Chromium (playwright-core 1.48) with the board from source inside a cross-origin iframe of a stand-in editor: Edit in BeeWriter opens backlog/docs/guides/doc-1%20-%20Release-plan.md in the top window; ?edit=true shows no editor; New document with folder 'meetings/2026 Q4' creates the file and the top window opens .../meetings/2026%20Q4/doc-2%20-%20Notes-from-the-call.md. A cross-origin frame may not call top.location.assign (SecurityError), so the page sets top.location.href. Full suite: 3303 + 411 pass; one failure in content-frontmatter-preservation is a minute-boundary timestamp flake (13:32 vs 13:33) that passes on rerun with and without this change. bun run check fails only on the untracked pr-list-new-task/biome.json; the changed files pass Biome.
+
+Same-site paths ("/w/ORG/PROJECT/{path}") accepted too, at BeeWriter's request: its server does not know its public address. "//host/..." and relative paths are still refused.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

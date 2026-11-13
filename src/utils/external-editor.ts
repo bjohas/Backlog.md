@@ -4,7 +4,10 @@
  * there instead of offering its own editor, so only one program writes a document.
  */
 export interface ExternalEditor {
-	/** An http(s) address containing `{path}`, which is replaced by the file's path from the project root. */
+	/**
+	 * An http(s) address, or a same-site path starting with `/`, containing `{path}`, which is replaced
+	 * by the file's path from the project root.
+	 */
 	urlPattern: string;
 	/** The editor's name, shown as "Edit in <label>". */
 	label: string;
@@ -14,7 +17,7 @@ const PATH_PLACEHOLDER = "{path}";
 
 /**
  * The external editor given on the command line, or undefined when neither option is set. Throws
- * when only one of the two is given or the pattern is not an http(s) address with `{path}`.
+ * when only one of the two is given or the pattern is not an http(s) address or `/` path with `{path}`.
  */
 export function parseExternalEditor(urlPattern?: string, label?: string): ExternalEditor | undefined {
 	const pattern = urlPattern?.trim() ?? "";
@@ -28,12 +31,15 @@ export function parseExternalEditor(urlPattern?: string, label?: string): Extern
 			`--external-editor must contain ${PATH_PLACEHOLDER}, e.g. https://github.com/OWNER/REPO/edit/main/{path}`,
 		);
 	}
+	// A same-site path ("/w/{path}") suits a page served behind a proxy that does not know its public
+	// address; "//host/..." would name another site, so it is not one.
+	const sameSitePath = pattern.startsWith("/") && !pattern.startsWith("//");
 	let protocol = "";
 	try {
 		protocol = new URL(pattern.replaceAll(PATH_PLACEHOLDER, "x")).protocol;
 	} catch {}
-	if (protocol !== "http:" && protocol !== "https:") {
-		throw new Error(`--external-editor must be an http(s) address, got "${pattern}".`);
+	if (!sameSitePath && protocol !== "http:" && protocol !== "https:") {
+		throw new Error(`--external-editor must be an http(s) address or a path starting with /, got "${pattern}".`);
 	}
 	return { urlPattern: pattern, label: name };
 }
