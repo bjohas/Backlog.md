@@ -29,6 +29,9 @@ interface TaskColumnProps {
   onBatchMove?: (targetStatus: string, targetMilestone?: string | null) => void;
   isSelectionDragging?: boolean;
   onSelectionDragChange?: (active: boolean) => void;
+  /** The board's statuses, offered by each card's Move to choice. */
+  moveStatuses?: string[];
+  onTaskMove?: (task: Task, targetStatus: string) => void;
 }
 
 type CreatedDateSortDirection = 'asc' | 'desc';
@@ -83,6 +86,8 @@ const TaskColumn: React.FC<TaskColumnProps> = ({
   onBatchMove,
   isSelectionDragging,
   onSelectionDragChange,
+  moveStatuses,
+  onTaskMove,
 }) => {
   const [isDragOver, setIsDragOver] = React.useState(false);
   const [draggedTaskId, setDraggedTaskId] = React.useState<string | null>(null);
@@ -399,6 +404,8 @@ const TaskColumn: React.FC<TaskColumnProps> = ({
                 onDragEnd?.();
               }}
               status={title}
+              moveStatuses={moveStatuses}
+              onMove={onTaskMove ? (targetStatus) => onTaskMove(task, targetStatus) : undefined}
               laneId={laneId}
               availableTypes={availableTypes}
               availableProjects={availableProjects}

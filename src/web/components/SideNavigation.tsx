@@ -263,6 +263,10 @@ interface SideNavigationProps {
 	onRefreshData: () => Promise<void>;
 }
 
+/** Below Tailwind's `sm` breakpoint (40rem), where the web UI uses its phone layout: the same query as `max-sm:`. */
+const isPhoneWidth = () =>
+	typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(width < 40rem)').matches;
+
 const SideNavigation = memo(function SideNavigation({ 
 	taskCount,
 	docs, 
@@ -271,7 +275,10 @@ const SideNavigation = memo(function SideNavigation({
 	error,
 	onRetry
 }: SideNavigationProps) {
+	// On a phone the open sidebar would cover the page, so it starts folded there. The saved choice
+	// belongs to wider screens, and folding or opening it on a phone does not overwrite it.
 	const [isCollapsed, setIsCollapsed] = useState(() => {
+		if (isPhoneWidth()) return true;
 		const saved = localStorage.getItem('sideNavCollapsed');
 		return saved ? JSON.parse(saved) : false;
 	});
@@ -319,8 +326,14 @@ const SideNavigation = memo(function SideNavigation({
 	}, [navigate]);
 
 	useEffect(() => {
+		if (isPhoneWidth()) return;
 		localStorage.setItem('sideNavCollapsed', JSON.stringify(isCollapsed));
 	}, [isCollapsed]);
+
+	// On a phone the open sidebar lies over the page, so going to another page folds it again.
+	useEffect(() => {
+		if (isPhoneWidth()) setIsCollapsed(true);
+	}, [location.pathname]);
 
 	// Fetch version on mount
 	useEffect(() => {
@@ -466,7 +479,15 @@ const SideNavigation = memo(function SideNavigation({
 
 	return (
 		<ErrorBoundary>
-			<div className={`relative bg-gray-50 dark:bg-gray-900 border-r border-gray-200 dark:border-gray-700 transition-all duration-300 flex flex-col min-h-full z-10 ${isCollapsed ? 'w-16' : 'w-80 min-w-80'}`}>
+			{/* Below sm the open sidebar lies over the page: the spacer keeps the board where the icon
+			    strip left it, and tapping the backdrop folds the sidebar. */}
+			{!isCollapsed && (
+				<>
+					<div className="w-16 shrink-0 sm:hidden" />
+					<div className="fixed inset-0 z-40 bg-black/30 sm:hidden" aria-hidden="true" onClick={() => setIsCollapsed(true)} />
+				</>
+			)}
+			<div className={`bg-gray-50 dark:bg-gray-900 border-r border-gray-200 dark:border-gray-700 transition-all duration-300 flex flex-col min-h-full ${isCollapsed ? 'relative z-10 w-16' : 'fixed inset-y-0 left-0 z-50 w-80 max-w-[85vw] shadow-xl sm:relative sm:inset-auto sm:z-10 sm:min-w-80 sm:max-w-none sm:shadow-none'}`}>
 			{/* Search Bar */}
 			<div className={`${isCollapsed ? 'px-2' : 'px-4'} border-b border-gray-200 dark:border-gray-700 h-18 flex items-center relative`}>
 				{/* Collapse Toggle Button - Always positioned on the border */}

@@ -10,6 +10,7 @@ import { getProjectValues, matchesProjectFilter } from '../../utils/project-conf
 import { getTaskTypeValues, matchesTaskTypeFilter } from '../../utils/task-type-config';
 import { resolveTaskById } from '../../utils/task-id';
 import TaskColumn from './TaskColumn';
+import BoardColumns from './BoardColumns';
 import { BoardLoadingSkeleton } from './BoardLoadingSkeleton';
 import CleanupModal from './CleanupModal';
 import LabelFilterDropdown from './LabelFilterDropdown';
@@ -88,6 +89,8 @@ const Board: React.FC<BoardProps> = ({
   // carry the same dragging treatment as the grabbed one.
   const [isSelectionDragging, setIsSelectionDragging] = useState(false);
   const [batchMoveStatus, setBatchMoveStatus] = useState<string>('');
+  // Below sm the filters sit behind one Filters button so the columns start on the first screen.
+  const [showPhoneFilters, setShowPhoneFilters] = useState(false);
   const [dragSourceStatus, setDragSourceStatus] = useState<string | null>(null);
   const [dragSourceLane, setDragSourceLane] = useState<string | null>(null);
   // Set one task after dragstart, never inside it: see handleColumnDragStart.
@@ -260,12 +263,14 @@ const Board: React.FC<BoardProps> = ({
     [filterLabels]
   );
 
-  const hasActiveFilters =
-    filterAssignee !== '' ||
-    normalizedFilterLabels.length > 0 ||
-    filterPriority !== '' ||
-    filterType !== '' ||
-    filterProject !== '';
+  const activeFilterCount = [
+    filterAssignee !== '',
+    normalizedFilterLabels.length > 0,
+    filterPriority !== '',
+    filterType !== '',
+    filterProject !== '',
+  ].filter(Boolean).length;
+  const hasActiveFilters = activeFilterCount > 0;
 
   // Filter tasks by milestone when milestoneFilter is set, then apply assignee/label/priority filters
   const filteredTasks = useMemo(() => {
@@ -381,9 +386,24 @@ const Board: React.FC<BoardProps> = ({
       );
     if (landsWhereItAlreadyIs) return;
 
-    const requestTask = selectedTasks[0];
     clearSelection();
     setBatchMoveStatus('');
+    await moveTasks(taskIds, selectedTasks[0], targetStatus, targetMilestone);
+  };
+
+  // A card's own Move to choice (the phone layout's alternative to dragging) moves just that task,
+  // through the same request as the selection toolbar, leaving its milestone alone.
+  const handleTaskMove = async (task: Task, targetStatus: string) => {
+    if (task.status === targetStatus) return;
+    await moveTasks([task.id], task, targetStatus);
+  };
+
+  const moveTasks = async (
+    taskIds: string[],
+    requestTask: Task | undefined,
+    targetStatus: string,
+    targetMilestone?: string | null
+  ) => {
     try {
       const result = await apiClient.moveTasks({
         taskIds,
@@ -740,7 +760,22 @@ const Board: React.FC<BoardProps> = ({
               </button>
             </div>
             {onFiltersChange && (
-              <div className="flex flex-wrap items-center gap-3" aria-label="Board filters">
+              <button
+                type="button"
+                className={`sm:hidden ${BOARD_FILTER_BUTTON_CLASS}`}
+                aria-expanded={showPhoneFilters}
+                aria-controls="board-filters"
+                onClick={() => setShowPhoneFilters((shown) => !shown)}
+              >
+                {activeFilterCount > 0 ? `Filters (${activeFilterCount})` : 'Filters'}
+              </button>
+            )}
+            {onFiltersChange && (
+              <div
+                id="board-filters"
+                className={`${showPhoneFilters ? 'flex' : 'hidden'} sm:flex flex-wrap items-center gap-3`}
+                aria-label="Board filters"
+              >
                 <select
                   aria-label="Filter board by assignee"
                   value={filterAssignee}
@@ -880,9 +915,11 @@ const Board: React.FC<BoardProps> = ({
                 {/* Lane content - columns */}
                 {!isCollapsed && (
                   <div className="p-4">
-                    <div className="grid gap-4" style={{ gridTemplateColumns: `repeat(${visibleStatuses.length}, minmax(0, 1fr))` }}>
-                      {visibleStatuses.map((status) => (
-                        <div key={`${lane.key}-${status}`} className="min-w-0">
+                    <BoardColumns
+                      statuses={visibleStatuses}
+                      taskCounts={visibleStatuses.map((status) => getTasksForLane(lane.key, status).length)}
+                      layout="grid"
+                      renderColumn={(status) => (
                           <TaskColumn
                             title={status}
                             tasks={getTasksForLane(lane.key, status)}
@@ -900,11 +937,12 @@ const Board: React.FC<BoardProps> = ({
                             onDragStart={handleColumnDragStart}
                             onDragEnd={handleColumnDragEnd}
                             onCleanup={status === terminalStatus ? () => setShowCleanupModal(true) : undefined}
+                            moveStatuses={statuses}
+                            onTaskMove={handleTaskMove}
                             {...selectionProps}
                           />
-                        </div>
-                      ))}
-                    </div>
+                      )}
+                    />
                   </div>
                 )}
               </div>
@@ -912,10 +950,11 @@ const Board: React.FC<BoardProps> = ({
           })}
         </div>
       ) : (
-        <div className="overflow-x-auto pb-2">
-          <div className="flex flex-row flex-nowrap gap-4 w-full">
-            {visibleStatuses.map((status) => (
-              <div key={status} className="flex-1 min-w-[16rem]">
+        <BoardColumns
+          statuses={visibleStatuses}
+          taskCounts={visibleStatuses.map((status) => getTasksForLane(DEFAULT_LANE_KEY, status).length)}
+          layout="row"
+          renderColumn={(status) => (
                 <TaskColumn
                   title={status}
                   tasks={getTasksForLane(DEFAULT_LANE_KEY, status)}
@@ -932,12 +971,12 @@ const Board: React.FC<BoardProps> = ({
                   onDragStart={handleColumnDragStart}
                   onDragEnd={handleColumnDragEnd}
                   onCleanup={status === terminalStatus ? () => setShowCleanupModal(true) : undefined}
+                  moveStatuses={statuses}
+                  onTaskMove={handleTaskMove}
                   {...selectionProps}
                 />
-              </div>
-            ))}
-          </div>
-        </div>
+          )}
+        />
       )}
 
       {/* Cleanup Modal */}
