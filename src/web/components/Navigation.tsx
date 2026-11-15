@@ -38,24 +38,24 @@ const Navigation: React.FC<NavigationProps> = ({ projectName, loadingMessage, on
     const syncTone = getSyncTone(syncResult?.status, syncError !== null && syncError !== undefined);
 
     return (
-        <nav className="relative px-8 h-18 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 transition-colors duration-200">
-            <div className="h-full flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                    <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">{projectName || 'Loading...'}</h1>
-                    <span className="text-sm text-gray-500 dark:text-gray-400">powered by</span>
+        <nav className="relative px-4 sm:px-8 h-18 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 transition-colors duration-200">
+            <div className="h-full flex items-center justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-2">
+                    <h1 className="max-sm:truncate text-xl font-bold text-gray-900 dark:text-gray-100">{projectName || 'Loading...'}</h1>
+                    <span className="hidden sm:inline text-sm text-gray-500 dark:text-gray-400">powered by</span>
                     <a
                         href="https://backlog.md"
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-sm text-stone-600 hover:text-stone-700 dark:text-stone-400 dark:hover:text-stone-300 hover:underline transition-colors duration-200"
+                        className="hidden sm:inline text-sm text-stone-600 hover:text-stone-700 dark:text-stone-400 dark:hover:text-stone-300 hover:underline transition-colors duration-200"
                     >
                         Backlog.md
                     </a>
                 </div>
-                <div className="flex items-center gap-3">
+                <div className="flex min-w-0 items-center gap-3">
                     <BranchIndexingIndicator message={loadingMessage} />
                     {onSync && syncMessage && (
-                        <span className={`text-sm ${syncTone}`} role="status" aria-live="polite">
+                        <span className={`max-sm:truncate text-sm ${syncTone}`} title={syncMessage} role="status" aria-live="polite">
                             {syncMessage}
                         </span>
                     )}
@@ -64,7 +64,7 @@ const Navigation: React.FC<NavigationProps> = ({ projectName, loadingMessage, on
                         type="button"
                         onClick={() => void onSync()}
                         disabled={isSyncPending}
-                        className="rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800"
+                        className="shrink-0 rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800"
                     >
                         {isSyncPending ? 'Syncing…' : 'Sync'}
                     </button>

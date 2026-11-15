@@ -13,6 +13,9 @@ interface TaskCardProps {
   onDragStart?: () => void;
   onDragEnd?: () => void;
   status?: string;
+  /** Statuses offered by the phone layout's Move to choice; the card's own status is left out. */
+  moveStatuses?: string[];
+  onMove?: (targetStatus: string) => void;
   laneId?: string;
   availableTypes?: string[];
   availableProjects?: string[];
@@ -66,6 +69,8 @@ const TaskCard: React.FC<TaskCardProps> = ({
   onDragStart,
   onDragEnd,
   status,
+  moveStatuses,
+  onMove,
   laneId,
   availableTypes,
   availableProjects,
@@ -161,6 +166,7 @@ const TaskCard: React.FC<TaskCardProps> = ({
   };
 
   const priorityBadge = getPriorityBadge(task.priority);
+  const moveTargets = (moveStatuses ?? []).filter((candidate) => candidate !== status);
 
   return (
     <div className="relative">
@@ -295,6 +301,25 @@ const TaskCard: React.FC<TaskCardProps> = ({
           )}
         </div>
       </div>
+
+      {/* Phones cannot be relied on to drag, so below sm a movable card offers its other columns here. */}
+      {onMove && !isFromOtherBranch && moveTargets.length > 0 && (
+        <select
+          aria-label={`Move ${task.id} to`}
+          value=""
+          onChange={(event) => {
+            if (event.target.value) onMove(event.target.value);
+          }}
+          className="sm:hidden block ml-auto -mt-1 mb-2 h-8 px-2 text-xs border border-gray-200 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300"
+        >
+          <option value="">Move to…</option>
+          {moveTargets.map((target) => (
+            <option key={target} value={target}>
+              {target}
+            </option>
+          ))}
+        </select>
+      )}
     </div>
   );
 };

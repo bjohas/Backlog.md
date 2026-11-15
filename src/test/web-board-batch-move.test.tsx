@@ -126,7 +126,7 @@ const getCard = (container: HTMLElement, taskId: string): HTMLElement => {
 };
 
 const selectedCardIds = (container: HTMLElement): string[] =>
-	Array.from(container.querySelectorAll('[aria-selected="true"]')).map(
+	Array.from(container.querySelectorAll('[role="button"][aria-selected="true"]')).map(
 		(element) => element.querySelector(".font-mono")?.textContent ?? "",
 	);
 
